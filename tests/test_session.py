@@ -545,40 +545,49 @@ class SessionOrchestratorTests(unittest.TestCase):
             self.assertEqual(telemetry.events[-1].kind, "incident_summary")
 
     def test_monitor_connection_degrades_session_without_auto_reconnect(self) -> None:
-        orchestrator = SessionOrchestrator(
-            default_transport_registry(),
-            ProbeEngine(),
-            network_stack=SimulatedNetworkStack(),
-            telemetry=TelemetryRecorder(),
-            dataplane=LinuxUserspaceDataPlane(dry_run=True),
-        )
-        manifest = Manifest(
-            version=1,
-            generated_at="2026-04-23T00:00:00Z",
-            expires_at="2026-04-30T00:00:00Z",
-            features={},
-            transport_policy=TransportPolicy(preferred_order=["https"], retry_budget=1),
-            network_policy=NetworkPolicy(),
-            endpoints=[
-                Endpoint(
-                    id="https-1",
-                    host="198.51.100.20",
-                    port=443,
-                    transport="https",
-                    region="eu-central",
-                    metadata={},
-                ),
-            ],
-        )
+        with tempfile.TemporaryDirectory() as tmp:
+            runtime_state = RuntimeState(Path(tmp) / "marker.json")
+            telemetry = TelemetryRecorder()
+            dataplane = LinuxUserspaceDataPlane(dry_run=True)
+            orchestrator = SessionOrchestrator(
+                default_transport_registry(),
+                ProbeEngine(),
+                network_stack=SimulatedNetworkStack(),
+                telemetry=telemetry,
+                dataplane=dataplane,
+                runtime_state=runtime_state,
+            )
+            manifest = Manifest(
+                version=1,
+                generated_at="2026-04-23T00:00:00Z",
+                expires_at="2026-04-30T00:00:00Z",
+                features={},
+                transport_policy=TransportPolicy(preferred_order=["https"], retry_budget=1),
+                network_policy=NetworkPolicy(),
+                endpoints=[
+                    Endpoint(
+                        id="https-1",
+                        host="198.51.100.20",
+                        port=443,
+                        transport="https",
+                        region="eu-central",
+                        metadata={},
+                    ),
+                ],
+            )
 
-        connected = orchestrator.connect(manifest)
-        self.assertEqual(connected.state, SessionState.CONNECTED)
-        manifest.endpoints[0].metadata["dataplane_failure"] = "health"
+            connected = orchestrator.connect(manifest)
+            self.assertEqual(connected.state, SessionState.CONNECTED)
+            self.assertIsNotNone(runtime_state.load_marker())
+            manifest.endpoints[0].metadata["dataplane_failure"] = "health"
 
-        monitored = orchestrator.monitor_connection(manifest, checks=1, auto_reconnect=False)
+            monitored = orchestrator.monitor_connection(manifest, checks=1, auto_reconnect=False)
 
-        self.assertEqual(monitored.state, SessionState.DEGRADED)
-        self.assertEqual(monitored.failure_class, FailureClass.NETWORK_DOWN)
+            self.assertEqual(monitored.state, SessionState.DEGRADED)
+            self.assertEqual(monitored.failure_class, FailureClass.NETWORK_DOWN)
+            self.assertIsNone(runtime_state.load_marker())
+            self.assertIsNone(dataplane.session)
+            self.assertTrue(any(event.kind == "session_degraded" for event in telemetry.events))
 
     def test_monitor_connection_auto_reconnects(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

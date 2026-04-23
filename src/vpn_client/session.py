@@ -441,6 +441,36 @@ class SessionOrchestrator:
             ),
         )
 
+    def _degrade_current_session(
+        self,
+        endpoint,
+        failure_class: FailureClass,
+        detail: str,
+    ) -> SessionReport:
+        applied_state = self.network_stack.applied_state
+        applied_tunnel_mode = applied_state.tunnel_mode if applied_state is not None else None
+        self.dataplane.disconnect()
+        if self.runtime_state:
+            self.runtime_state.clear()
+        self.state = SessionState.DEGRADED
+        self.telemetry.record(
+            "session_degraded",
+            self.state,
+            failure_class,
+            endpoint_id=endpoint.id,
+            transport=endpoint.transport,
+            detail=detail,
+        )
+        return SessionReport(
+            state=self.state,
+            selected_endpoint_id=endpoint.id,
+            selected_transport=endpoint.transport,
+            applied_tunnel_mode=applied_tunnel_mode,
+            kill_switch_active=self.network_stack.kill_switch_active,
+            failure_class=failure_class,
+            detail=detail,
+        )
+
     def monitor_connection(self, manifest: Manifest, checks: int = 1, auto_reconnect: bool = False) -> SessionReport | None:
         if self.state is not SessionState.CONNECTED or self.network_stack.applied_state is None:
             return None
@@ -480,15 +510,10 @@ class SessionOrchestrator:
                         detail=report.detail,
                     )
                     return self.reconnect(manifest)
-                self.state = SessionState.DEGRADED
-                return SessionReport(
-                    state=self.state,
-                    selected_endpoint_id=endpoint.id,
-                    selected_transport=endpoint.transport,
-                    applied_tunnel_mode=self.network_stack.applied_state.tunnel_mode,
-                    kill_switch_active=self.network_stack.kill_switch_active,
-                    failure_class=report.failure_class,
-                    detail=report.detail,
+                return self._degrade_current_session(
+                    endpoint,
+                    report.failure_class,
+                    report.detail,
                 )
         return SessionReport(
             state=self.state,
