@@ -1,0 +1,139 @@
+{
+  "version": 1,
+  "generated_at": "2026-04-23T00:00:00Z",
+  "expires_at": "2026-04-30T00:00:00Z",
+  "platform_capabilities": {
+    "linux": {
+      "platform": "linux",
+      "supported_dataplanes": [
+        "linux-userspace",
+        "xray-core",
+        "routed"
+      ],
+      "network_adapter": "linux",
+      "startup_reconciliation": true,
+      "status": "prototype",
+      "notes": "Linux keeps the real command-planning network adapter in this repository."
+    },
+    "windows": {
+      "platform": "windows",
+      "supported_dataplanes": [
+        "xray-core",
+        "routed"
+      ],
+      "network_adapter": "windows",
+      "status": "planned",
+      "notes": "Desktop Windows path is expected to use xray-core with a native route and DNS adapter."
+    },
+    "macos": {
+      "platform": "macos",
+      "supported_dataplanes": [
+        "xray-core",
+        "routed"
+      ],
+      "network_adapter": "macos",
+      "status": "planned",
+      "notes": "macOS path needs a platform adapter that can evolve toward Network Extension integration."
+    },
+    "android": {
+      "platform": "android",
+      "supported_dataplanes": [
+        "xray-core",
+        "routed"
+      ],
+      "network_adapter": "android",
+      "status": "planned",
+      "notes": "Android path is intended to sit on top of the VpnService lifecycle."
+    },
+    "ios": {
+      "platform": "ios",
+      "supported_dataplanes": [
+        "ios-bridge",
+        "routed"
+      ],
+      "network_adapter": "ios",
+      "status": "planned",
+      "notes": "iOS path uses the ios-bridge contract and a future Network Extension runtime."
+    }
+  },
+  "features": {
+    "remote_disable_quic": false,
+    "support_bundle_enabled": true
+  },
+  "network_policy": {
+    "tunnel_mode": "full",
+    "dns_mode": "vpn_only",
+    "kill_switch_enabled": true,
+    "ipv6_enabled": false,
+    "allow_lan_while_connected": false
+  },
+  "transport_policy": {
+    "preferred_order": [
+      "wireguard",
+      "https",
+      "quic"
+    ],
+    "connect_timeout_ms": 2500,
+    "retry_budget": 3,
+    "probe_timeout_ms": 1000
+  },
+  "endpoints": [
+    {
+      "id": "ru-mow-1",
+      "host": "198.51.100.10",
+      "port": 51820,
+      "transport": "wireguard",
+      "region": "eu-central",
+      "tags": [
+        "primary"
+      ],
+      "metadata": {
+        "simulated_failure": "udp"
+      }
+    },
+    {
+      "id": "ru-spb-https-1",
+      "host": "198.51.100.20",
+      "port": 443,
+      "transport": "https",
+      "region": "eu-central",
+      "tags": [
+        "fallback"
+      ],
+      "metadata": {
+        "latency_ms": 130,
+        "dataplane": "xray-core",
+        "xray_protocol": "vless",
+        "xray_user_id": "11111111-1111-1111-1111-111111111111",
+        "xray_stream_network": "ws",
+        "xray_security": "tls",
+        "xray_server_name": "cdn.example.net",
+        "xray_ws_path": "/edge",
+        "xray_ws_host": "cdn.example.net"
+      }
+    },
+    {
+      "id": "ru-spb-quic-1",
+      "host": "198.51.100.30",
+      "port": 443,
+      "transport": "quic",
+      "region": "eu-central",
+      "tags": [
+        "fast-path"
+      ],
+      "metadata": {
+        "simulated_failure": "tls",
+        "dataplane": "xray-core",
+        "xray_protocol": "vless",
+        "xray_user_id": "22222222-2222-2222-2222-222222222222",
+        "xray_stream_network": "tcp",
+        "xray_security": "reality",
+        "xray_server_name": "cdn-fast.example.net",
+        "xray_fingerprint": "chrome",
+        "xray_reality_public_key": "PUBLIC_KEY_HERE",
+        "xray_reality_short_id": "0123456789abcdef"
+      }
+    }
+  ],
+  "signature": "WJwayaikBVbFB66r/kUElpxSN/LsL1jphM9HyVoWpIv5fCSuGNGxwVQKcA62GB1z68EsODX6a6vTI7um+niRAQ=="
+}

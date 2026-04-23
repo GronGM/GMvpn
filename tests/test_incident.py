@@ -1,0 +1,133 @@
+from __future__ import annotations
+
+import tempfile
+import unittest
+from dataclasses import dataclass
+from pathlib import Path
+
+from vpn_client.incident import build_incident_summary
+from vpn_client.models import FailureClass, Manifest, NetworkPolicy, SessionState, TransportPolicy
+from vpn_client.state import StateManager, StateStore
+
+
+@dataclass(slots=True)
+class DummyReport:
+    state: SessionState
+    selected_endpoint_id: str | None = None
+    selected_transport: str | None = None
+    failure_class: FailureClass = FailureClass.NONE
+
+
+@dataclass(slots=True)
+class DummyRecoveryReport:
+    stale_marker_found: bool
+
+
+class IncidentSummaryTests(unittest.TestCase):
+    def test_incident_summary_marks_startup_recovery_as_warning(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            manager = StateManager(StateStore(Path(tmp) / "state.json"))
+            manager.mark_stale_runtime("edge-1", "https")
+
+            summary = build_incident_summary(
+                state_manager=manager,
+                report=DummyReport(
+                    state=SessionState.CONNECTED,
+                    selected_endpoint_id="edge-1",
+                    selected_transport="https",
+                ),
+                recovery_report=DummyRecoveryReport(stale_marker_found=True),
+                recovery_cleanup_enabled=True,
+                simulated_stale_runtime_endpoint_id="edge-1",
+            )
+
+            self.assertEqual(summary["headline"], "startup recovery handled a stale runtime marker")
+            self.assertEqual(summary["severity"], "warning")
+            self.assertEqual(
+                summary["recommended_action"],
+                "Review the last crash reason and monitor the recovered transport for repeat failures.",
+            )
+            self.assertEqual(summary["last_crash_transport"], "https")
+
+    def test_incident_summary_marks_clean_connection_as_ok(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            manager = StateManager(StateStore(Path(tmp) / "state.json"))
+
+            summary = build_incident_summary(
+                state_manager=manager,
+                report=DummyReport(
+                    state=SessionState.CONNECTED,
+                    selected_endpoint_id="edge-1",
+                    selected_transport="https",
+                ),
+                recovery_report=DummyRecoveryReport(stale_marker_found=False),
+                recovery_cleanup_enabled=False,
+                simulated_stale_runtime_endpoint_id=None,
+            )
+
+            self.assertEqual(summary["severity"], "ok")
+            self.assertEqual(summary["recommended_action"], "No immediate action required.")
+
+    def test_incident_summary_uses_failure_class_guidance_for_degraded_session(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            manager = StateManager(StateStore(Path(tmp) / "state.json"))
+
+            summary = build_incident_summary(
+                state_manager=manager,
+                report=DummyReport(
+                    state=SessionState.DEGRADED,
+                    failure_class=FailureClass.TLS_INTERFERENCE,
+                ),
+                recovery_report=DummyRecoveryReport(stale_marker_found=False),
+                recovery_cleanup_enabled=False,
+                simulated_stale_runtime_endpoint_id=None,
+            )
+
+            self.assertEqual(summary["severity"], "warning")
+            self.assertEqual(summary["failure_class"], "tls_interference")
+            self.assertEqual(
+                summary["recommended_action"],
+                "Try an alternate transport or resolver path and inspect local interference signals before retrying.",
+            )
+
+    def test_incident_summary_uses_manifest_guidance_override(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            manager = StateManager(StateStore(Path(tmp) / "state.json"))
+            manifest = Manifest(
+                version=1,
+                generated_at="2026-04-23T00:00:00Z",
+                expires_at="2026-04-30T00:00:00Z",
+                endpoints=[],
+                transport_policy=TransportPolicy(preferred_order=["https"]),
+                network_policy=NetworkPolicy(),
+                features={
+                    "incident_guidance_overrides": {
+                        "tls_interference": {
+                            "severity": "critical",
+                            "recommended_action": "Use the provider emergency fallback profile before retrying.",
+                        }
+                    }
+                },
+            )
+
+            summary = build_incident_summary(
+                state_manager=manager,
+                report=DummyReport(
+                    state=SessionState.DEGRADED,
+                    failure_class=FailureClass.TLS_INTERFERENCE,
+                ),
+                recovery_report=DummyRecoveryReport(stale_marker_found=False),
+                recovery_cleanup_enabled=False,
+                simulated_stale_runtime_endpoint_id=None,
+                manifest=manifest,
+            )
+
+            self.assertEqual(summary["severity"], "critical")
+            self.assertEqual(
+                summary["recommended_action"],
+                "Use the provider emergency fallback profile before retrying.",
+            )
+
+
+if __name__ == "__main__":
+    unittest.main()

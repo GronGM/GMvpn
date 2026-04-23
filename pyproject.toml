@@ -3,13 +3,20 @@ requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "vpnclient-prototype"
+name = "resilient-vpn-client"
 version = "0.1.0"
-description = "Linux-first resilient VPN client prototype"
+description = "Prototype foundation for a resilient open-source VPN client."
 readme = "README.md"
 requires-python = ">=3.11"
-dependencies = []
+dependencies = [
+  "cryptography>=42.0.0",
+]
 
-[tool.pytest.ini_options]
-pythonpath = ["src"]
-testpaths = ["tests"]
+[project.scripts]
+resilient-vpn = "vpn_client.cli:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]

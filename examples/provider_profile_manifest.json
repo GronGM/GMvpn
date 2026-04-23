@@ -1,0 +1,196 @@
+{
+  "version": 1,
+  "generated_at": "2026-04-23T00:00:00Z",
+  "expires_at": "2026-04-30T00:00:00Z",
+  "platform_capabilities": {
+    "linux": {
+      "platform": "linux",
+      "supported_dataplanes": [
+        "linux-userspace",
+        "xray-core",
+        "routed"
+      ],
+      "network_adapter": "linux",
+      "startup_reconciliation": true,
+      "status": "prototype",
+      "notes": "Linux keeps the real command-planning network adapter in this repository."
+    },
+    "windows": {
+      "platform": "windows",
+      "supported_dataplanes": [
+        "xray-core",
+        "routed"
+      ],
+      "network_adapter": "windows",
+      "status": "planned",
+      "notes": "Desktop Windows path is expected to use xray-core with a native route and DNS adapter."
+    },
+    "macos": {
+      "platform": "macos",
+      "supported_dataplanes": [
+        "xray-core",
+        "routed"
+      ],
+      "network_adapter": "macos",
+      "status": "planned",
+      "notes": "macOS path needs a platform adapter that can evolve toward Network Extension integration."
+    },
+    "android": {
+      "platform": "android",
+      "supported_dataplanes": [
+        "xray-core",
+        "routed"
+      ],
+      "network_adapter": "android",
+      "status": "planned",
+      "notes": "Android path is intended to sit on top of the VpnService lifecycle."
+    },
+    "ios": {
+      "platform": "ios",
+      "supported_dataplanes": [
+        "ios-bridge",
+        "routed"
+      ],
+      "network_adapter": "ios",
+      "status": "planned",
+      "notes": "iOS path uses the ios-bridge contract and a future Network Extension runtime."
+    }
+  },
+  "features": {
+    "support_bundle_enabled": true,
+    "profile_kind": "provider-profile"
+  },
+  "network_policy": {
+    "tunnel_mode": "full",
+    "dns_mode": "vpn_only",
+    "kill_switch_enabled": true,
+    "ipv6_enabled": false,
+    "allow_lan_while_connected": false
+  },
+  "transport_policy": {
+    "preferred_order": [
+      "https"
+    ],
+    "connect_timeout_ms": 2500,
+    "retry_budget": 3,
+    "probe_timeout_ms": 1000
+  },
+  "endpoints": [
+    {
+      "id": "spb-main-desktop",
+      "host": "198.51.100.40",
+      "port": 443,
+      "transport": "https",
+      "region": "ru-spb",
+      "tags": [
+        "provider-profile",
+        "desktop",
+        "android",
+        "spb-main"
+      ],
+      "metadata": {
+        "platform_family": "desktop-android",
+        "supported_client_platforms": [
+          "linux",
+          "windows",
+          "macos",
+          "android",
+          "simulated"
+        ],
+        "dataplane": "xray-core",
+        "desktop_policy": {
+          "rank_priority": 20,
+          "platform_rank_priority": {
+            "linux": 10,
+            "windows": 20,
+            "macos": 30,
+            "simulated": 5
+          }
+        },
+        "android_policy": {
+          "session_name": "SPB Main",
+          "protect_socket_api": true,
+          "meter_handling": "allow_metered",
+          "on_boot_reconnect": true,
+          "respect_doze": true,
+          "reassert_on_network_change": true,
+          "rank_priority": 40
+        },
+        "xray_protocol": "vless",
+        "xray_user_id": "33333333-3333-3333-3333-333333333333",
+        "xray_stream_network": "ws",
+        "xray_security": "tls",
+        "xray_server_name": "edge-spb.example.net",
+        "xray_ws_path": "/desktop",
+        "xray_ws_host": "edge-spb.example.net",
+        "logical_server": "spb-main"
+      }
+    },
+    {
+      "id": "spb-main-ios",
+      "host": "198.51.100.40",
+      "port": 443,
+      "transport": "https",
+      "region": "ru-spb",
+      "tags": [
+        "provider-profile",
+        "ios",
+        "spb-main"
+      ],
+      "metadata": {
+        "platform_family": "ios",
+        "supported_client_platforms": [
+          "ios"
+        ],
+        "dataplane": "ios-bridge",
+        "xray_protocol": "vless",
+        "xray_user_id": "44444444-4444-4444-4444-444444444444",
+        "xray_stream_network": "ws",
+        "xray_security": "tls",
+        "xray_server_name": "edge-spb.example.net",
+        "xray_ws_path": "/ios",
+        "xray_ws_host": "edge-spb.example.net",
+        "ios_provider_kind": "packet-tunnel",
+        "logical_server": "spb-main"
+      }
+    },
+    {
+      "id": "spb-main-android-alt",
+      "host": "198.51.100.41",
+      "port": 443,
+      "transport": "https",
+      "region": "ru-spb",
+      "tags": [
+        "provider-profile",
+        "android",
+        "spb-main",
+        "alt"
+      ],
+      "metadata": {
+        "platform_family": "android",
+        "supported_client_platforms": [
+          "android"
+        ],
+        "dataplane": "xray-core",
+        "android_policy": {
+          "session_name": "SPB Main Alt",
+          "protect_socket_api": true,
+          "meter_handling": "prefer_unmetered",
+          "on_boot_reconnect": true,
+          "respect_doze": true,
+          "reassert_on_network_change": true,
+          "rank_priority": 90
+        },
+        "xray_protocol": "vless",
+        "xray_user_id": "55555555-5555-5555-5555-555555555555",
+        "xray_stream_network": "ws",
+        "xray_security": "tls",
+        "xray_server_name": "edge-spb-alt.example.net",
+        "xray_ws_path": "/android-alt",
+        "xray_ws_host": "edge-spb-alt.example.net",
+        "logical_server": "spb-main"
+      }
+    }
+  ],
+  "signature": "tbs3xpjnyLprv87xWGPliGXB3CuZcBhD5exjEmL3NWOXcAJ/cKqCBAWmvJMWknNNXPcctTRgPuMbQE22//i9Cg=="
+}
