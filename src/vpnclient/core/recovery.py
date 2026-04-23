@@ -18,6 +18,6 @@ class StartupRecovery:
     def mark_active(self) -> None:
         self.runtime_marker.write_text("active", encoding="utf-8")
 
-    def clear_active(self) -> None:
+    def clear(self) -> None:
         if self.runtime_marker.exists():
             self.runtime_marker.unlink()
