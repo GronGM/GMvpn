@@ -1,0 +1,150 @@
+from __future__ import annotations
+
+import tempfile
+import unittest
+from pathlib import Path
+
+from vpn_client.config import ManifestStore, SignedManifestLoader, canonical_manifest_bytes
+from vpn_client.security import Ed25519Verifier, generate_keypair, sign_payload
+
+
+def signed_manifest(private_pem: bytes) -> dict:
+    manifest = {
+        "version": 1,
+        "generated_at": "2026-04-23T00:00:00Z",
+        "expires_at": "2026-04-30T00:00:00Z",
+        "features": {"support_bundle_enabled": True},
+        "transport_policy": {
+            "preferred_order": ["wireguard", "https"],
+            "connect_timeout_ms": 2500,
+            "retry_budget": 3,
+            "probe_timeout_ms": 1000,
+        },
+        "endpoints": [
+            {
+                "id": "edge-1",
+                "host": "203.0.113.10",
+                "port": 443,
+                "transport": "https",
+                "region": "eu-central",
+                "tags": [],
+                "metadata": {},
+            }
+        ],
+    }
+    manifest["signature"] = sign_payload(private_pem, canonical_manifest_bytes(manifest))
+    return manifest
+
+
+class SignedManifestLoaderTests(unittest.TestCase):
+    def test_loader_verifies_and_caches_manifest(self) -> None:
+        private_pem, public_pem = generate_keypair()
+        verifier = Ed25519Verifier.from_public_key_pem(public_pem)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            store = ManifestStore(Path(tmp) / "cache")
+            loader = SignedManifestLoader(verifier=verifier, store=store)
+            manifest = loader.load_dict(signed_manifest(private_pem))
+
+            self.assertEqual(manifest.version, 1)
+            self.assertTrue(store.last_known_good_path.exists())
+
+    def test_loader_uses_cached_copy_when_primary_fails(self) -> None:
+        private_pem, public_pem = generate_keypair()
+        verifier = Ed25519Verifier.from_public_key_pem(public_pem)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            store = ManifestStore(root / "cache")
+            loader = SignedManifestLoader(verifier=verifier, store=store)
+
+            good = signed_manifest(private_pem)
+            loader.load_dict(good)
+
+            broken_path = root / "broken.json"
+            broken = signed_manifest(private_pem)
+            broken["signature"] = "corrupted"
+            broken_path.write_text(__import__("json").dumps(broken), encoding="utf-8")
+
+            manifest = loader.load_with_fallback(broken_path)
+            self.assertEqual(manifest.endpoints[0].id, "edge-1")
+
+    def test_loader_rejects_expired_manifest(self) -> None:
+        private_pem, public_pem = generate_keypair()
+        verifier = Ed25519Verifier.from_public_key_pem(public_pem)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            store = ManifestStore(Path(tmp) / "cache")
+            loader = SignedManifestLoader(verifier=verifier, store=store)
+
+            expired = signed_manifest(private_pem)
+            expired["expires_at"] = "2020-01-01T00:00:00Z"
+            expired["signature"] = sign_payload(private_pem, canonical_manifest_bytes(expired))
+
+            with self.assertRaises(Exception):
+                loader.load_dict(expired)
+
+    def test_loader_accepts_valid_incident_guidance_overrides(self) -> None:
+        private_pem, public_pem = generate_keypair()
+        verifier = Ed25519Verifier.from_public_key_pem(public_pem)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            store = ManifestStore(Path(tmp) / "cache")
+            loader = SignedManifestLoader(verifier=verifier, store=store)
+
+            manifest = signed_manifest(private_pem)
+            manifest["features"]["incident_guidance_overrides"] = {
+                "tls_interference": {
+                    "severity": "critical",
+                    "recommended_action": "Use emergency fallback transport before retrying.",
+                }
+            }
+            manifest["signature"] = sign_payload(private_pem, canonical_manifest_bytes(manifest))
+
+            loaded = loader.load_dict(manifest)
+
+            self.assertIn("incident_guidance_overrides", loaded.features)
+
+    def test_loader_rejects_invalid_incident_guidance_override_key(self) -> None:
+        private_pem, public_pem = generate_keypair()
+        verifier = Ed25519Verifier.from_public_key_pem(public_pem)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            store = ManifestStore(Path(tmp) / "cache")
+            loader = SignedManifestLoader(verifier=verifier, store=store)
+
+            manifest = signed_manifest(private_pem)
+            manifest["features"]["incident_guidance_overrides"] = {
+                "made_up_failure": {
+                    "severity": "warning",
+                    "recommended_action": "noop",
+                }
+            }
+            manifest["signature"] = sign_payload(private_pem, canonical_manifest_bytes(manifest))
+
+            with self.assertRaises(Exception):
+                loader.load_dict(manifest)
+
+    def test_loader_rejects_invalid_incident_guidance_override_shape(self) -> None:
+        private_pem, public_pem = generate_keypair()
+        verifier = Ed25519Verifier.from_public_key_pem(public_pem)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            store = ManifestStore(Path(tmp) / "cache")
+            loader = SignedManifestLoader(verifier=verifier, store=store)
+
+            manifest = signed_manifest(private_pem)
+            manifest["features"]["incident_guidance_overrides"] = {
+                "tls_interference": {
+                    "severity": "loud",
+                    "recommended_action": "",
+                }
+            }
+            manifest["signature"] = sign_payload(private_pem, canonical_manifest_bytes(manifest))
+
+            with self.assertRaises(Exception):
+                loader.load_dict(manifest)
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -1,0 +1,68 @@
+{
+  "version": 1,
+  "generated_at": "2026-04-23T00:00:00Z",
+  "expires_at": "2026-04-30T00:00:00Z",
+  "features": {
+    "remote_disable_quic": false,
+    "support_bundle_enabled": true
+  },
+  "network_policy": {
+    "tunnel_mode": "full",
+    "dns_mode": "vpn_only",
+    "kill_switch_enabled": true,
+    "ipv6_enabled": false,
+    "allow_lan_while_connected": false
+  },
+  "transport_policy": {
+    "preferred_order": [
+      "wireguard",
+      "https",
+      "quic"
+    ],
+    "connect_timeout_ms": 2500,
+    "retry_budget": 3,
+    "probe_timeout_ms": 1000
+  },
+  "endpoints": [
+    {
+      "id": "ru-mow-1",
+      "host": "198.51.100.10",
+      "port": 51820,
+      "transport": "wireguard",
+      "region": "eu-central",
+      "tags": [
+        "primary"
+      ],
+      "metadata": {
+        "simulated_failure": "udp"
+      }
+    },
+    {
+      "id": "ru-spb-https-1",
+      "host": "198.51.100.20",
+      "port": 443,
+      "transport": "https",
+      "region": "eu-central",
+      "tags": [
+        "fallback"
+      ],
+      "metadata": {
+        "latency_ms": 130
+      }
+    },
+    {
+      "id": "ru-spb-quic-1",
+      "host": "198.51.100.30",
+      "port": 443,
+      "transport": "quic",
+      "region": "eu-central",
+      "tags": [
+        "fast-path"
+      ],
+      "metadata": {
+        "simulated_failure": "tls"
+      }
+    }
+  ],
+  "signature": "6US9o90WUaZXblXoO/RKrIm6cBIqAgn95/bqnqyiqneTVDWUuvI7CIhdTrG5LuT0cn7EFDUsLe42S2A6yWg1Bg=="
+}

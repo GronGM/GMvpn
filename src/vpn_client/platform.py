@@ -1,0 +1,62 @@
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+from vpn_client.models import Endpoint, FailureClass, NetworkPolicy
+
+
+class NetworkStackError(Exception):
+    def __init__(self, failure_class: FailureClass, detail: str):
+        super().__init__(detail)
+        self.failure_class = failure_class
+        self.detail = detail
+
+
+@dataclass(slots=True)
+class AppliedNetworkState:
+    endpoint_id: str
+    tunnel_mode: str
+    dns_mode: str
+    kill_switch_enabled: bool
+    ipv6_enabled: bool
+
+
+class SimulatedNetworkStack:
+    """
+    Minimal platform-network layer that models what the real client must do:
+    apply routes, DNS policy, and kill switch semantics after transport connect.
+    """
+
+    def __init__(self) -> None:
+        self.kill_switch_active = False
+        self.applied_state: AppliedNetworkState | None = None
+
+    def apply(self, endpoint: Endpoint, policy: NetworkPolicy) -> AppliedNetworkState:
+        simulated = str(endpoint.metadata.get("network_stack_failure", ""))
+        if simulated == "routes":
+            self.kill_switch_active = policy.kill_switch_enabled
+            raise NetworkStackError(FailureClass.NETWORK_DOWN, "route programming failed")
+        if simulated == "dns":
+            self.kill_switch_active = policy.kill_switch_enabled
+            raise NetworkStackError(FailureClass.DNS_INTERFERENCE, "secure DNS policy could not be applied")
+
+        self.kill_switch_active = policy.kill_switch_enabled
+        self.applied_state = AppliedNetworkState(
+            endpoint_id=endpoint.id,
+            tunnel_mode=policy.tunnel_mode.value,
+            dns_mode=policy.dns_mode.value,
+            kill_switch_enabled=policy.kill_switch_enabled,
+            ipv6_enabled=policy.ipv6_enabled,
+        )
+        return self.applied_state
+
+    def disconnect(self) -> None:
+        self.teardown()
+
+    def reconnect(self, endpoint: Endpoint, policy: NetworkPolicy) -> AppliedNetworkState:
+        self.disconnect()
+        return self.apply(endpoint, policy)
+
+    def teardown(self) -> None:
+        self.applied_state = None
+        self.kill_switch_active = False
