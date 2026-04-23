@@ -77,6 +77,10 @@ def build_incident_summary(
         headline = "one or more endpoints are cooling down after recent failures"
         severity = "info"
         recommended_action = "Allow cooldown to expire or inspect the failing endpoints if degradation persists."
+    elif report.state in {SessionState.IDLE, SessionState.LOADING, SessionState.PROBING, SessionState.CONNECTING}:
+        headline = "no active runtime incidents detected"
+        severity = "ok"
+        recommended_action = "No immediate action required."
     elif report.state is SessionState.CONNECTED:
         headline = "session connected without active incident flags"
         severity = "ok"

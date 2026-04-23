@@ -14,6 +14,7 @@ class SupervisorCycleReport:
     pending_total: int
     pending_ready_transports: list[str]
     reenabled_transports: list[str]
+    incident_summary: dict[str, object] | None = None
 
 
 @dataclass(slots=True)
@@ -48,6 +49,7 @@ class RuntimeSupervisor:
                     pending_total=tick.pending_total,
                     pending_ready_transports=tick.pending_ready_transports,
                     reenabled_transports=tick.reenabled_transports,
+                    incident_summary=tick.incident_summary,
                 )
             )
             self.telemetry.record(

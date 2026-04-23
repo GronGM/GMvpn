@@ -13,3 +13,4 @@ class RuntimeTickReport:
     reenabled_transports: list[str]
     pending_ready_transports: list[str]
     pending_total: int
+    incident_summary: dict[str, object] | None = None

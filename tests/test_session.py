@@ -654,6 +654,45 @@ class SessionOrchestratorTests(unittest.TestCase):
             self.assertEqual(report.reenabled_transports, ["https"])
             self.assertTrue(any(event.kind == "runtime_tick" for event in telemetry.events))
 
+    def test_runtime_tick_returns_and_emits_runtime_incident_summary(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            state_manager = StateManager(StateStore(Path(tmp) / "state.json"))
+            state_manager.set_incident_flag_with_ttl("disable_transport_https", True, ttl_seconds=300)
+            telemetry = TelemetryRecorder()
+            orchestrator = SessionOrchestrator(
+                default_transport_registry(),
+                ProbeEngine(),
+                policy_engine=PolicyEngine(state_manager=state_manager),
+                network_stack=SimulatedNetworkStack(),
+                telemetry=telemetry,
+                state_manager=state_manager,
+            )
+            manifest = Manifest(
+                version=1,
+                generated_at="2026-04-23T00:00:00Z",
+                expires_at="2026-04-30T00:00:00Z",
+                features={},
+                transport_policy=TransportPolicy(preferred_order=["https"], retry_budget=1),
+                network_policy=NetworkPolicy(),
+                endpoints=[
+                    Endpoint(
+                        id="https-1",
+                        host="198.51.100.20",
+                        port=443,
+                        transport="https",
+                        region="eu-central",
+                        metadata={},
+                    ),
+                ],
+            )
+
+            report = orchestrator.runtime_tick(manifest)
+
+            self.assertIsNotNone(report.incident_summary)
+            self.assertEqual(report.incident_summary["severity"], "warning")
+            self.assertEqual(report.incident_summary["headline"], "one or more transports are locally disabled")
+            self.assertEqual(telemetry.events[-1].kind, "runtime_incident_summary")
+
     def test_supervisor_cycles_wrap_runtime_ticks(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             state_manager = StateManager(StateStore(Path(tmp) / "state.json"))
@@ -698,6 +737,7 @@ class SessionOrchestratorTests(unittest.TestCase):
 
             self.assertEqual(len(report.cycles), 1)
             self.assertEqual(report.cycles[0].reenabled_transports, ["https"])
+            self.assertEqual(report.cycles[0].incident_summary["severity"], "ok")
             self.assertTrue(any(event.kind == "supervisor_cycle_started" for event in telemetry.events))
 
 

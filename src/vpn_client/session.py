@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from types import SimpleNamespace
 
 from vpn_client.dataplane import DataPlaneBackend, DataPlaneError, NullDataPlane
 from vpn_client.health import HealthPolicy, SessionHealthMonitor
@@ -393,10 +394,13 @@ class SessionOrchestrator:
             manifest,
             limit=tick_policy.reevaluate_pending_transports_limit,
         )
+        incident_summary = self.build_runtime_incident_summary(manifest)
+        self.emit_runtime_incident_summary(incident_summary)
         return RuntimeTickReport(
             reenabled_transports=reenabled,
             pending_ready_transports=pending_ready,
             pending_total=pending_total,
+            incident_summary=incident_summary,
         )
 
     def build_incident_summary(
@@ -420,6 +424,29 @@ class SessionOrchestrator:
             policy_engine=self.policy_engine,
         )
 
+    def build_runtime_incident_summary(self, manifest: Manifest) -> dict[str, object]:
+        if self.state_manager is None:
+            raise RuntimeError("runtime incident summary requires a state manager")
+
+        selected_endpoint_id = self.network_stack.applied_state.endpoint_id if self.network_stack.applied_state else None
+        selected_transport = next(
+            (endpoint.transport for endpoint in manifest.endpoints if endpoint.id == selected_endpoint_id),
+            None,
+        )
+        report = SessionReport(
+            state=SessionState.IDLE if self.state is SessionState.IDLE else self.state,
+            selected_endpoint_id=selected_endpoint_id,
+            selected_transport=selected_transport,
+            failure_class=FailureClass.NONE,
+            detail="runtime maintenance state",
+        )
+        return self.build_incident_summary(
+            manifest=manifest,
+            report=report,
+            recovery_report=SimpleNamespace(stale_marker_found=False),
+            recovery_cleanup_enabled=False,
+        )
+
     def emit_incident_summary(self, report: SessionReport, incident_summary: dict[str, object]) -> None:
         if incident_summary["severity"] == "ok":
             return
@@ -430,6 +457,22 @@ class SessionOrchestrator:
             FailureClass(incident_summary["failure_class"]),
             endpoint_id=report.selected_endpoint_id,
             transport=report.selected_transport,
+            detail=(
+                f"{incident_summary['severity']}: {incident_summary['headline']}; "
+                f"{incident_summary['recommended_action']}"
+            ),
+        )
+
+    def emit_runtime_incident_summary(self, incident_summary: dict[str, object]) -> None:
+        if incident_summary["severity"] == "ok":
+            return
+
+        self.telemetry.record(
+            "runtime_incident_summary",
+            SessionState.IDLE if self.state is SessionState.IDLE else self.state,
+            FailureClass(incident_summary["failure_class"]),
+            endpoint_id=incident_summary.get("selected_endpoint_id"),
+            transport=incident_summary.get("selected_transport"),
             detail=(
                 f"{incident_summary['severity']}: {incident_summary['headline']}; "
                 f"{incident_summary['recommended_action']}"

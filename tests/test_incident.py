@@ -68,6 +68,21 @@ class IncidentSummaryTests(unittest.TestCase):
             self.assertEqual(summary["severity"], "ok")
             self.assertEqual(summary["recommended_action"], "No immediate action required.")
 
+    def test_incident_summary_marks_idle_without_active_issues_as_ok(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            manager = StateManager(StateStore(Path(tmp) / "state.json"))
+
+            summary = build_incident_summary(
+                state_manager=manager,
+                report=DummyReport(state=SessionState.IDLE),
+                recovery_report=DummyRecoveryReport(stale_marker_found=False),
+                recovery_cleanup_enabled=False,
+                simulated_stale_runtime_endpoint_id=None,
+            )
+
+            self.assertEqual(summary["headline"], "no active runtime incidents detected")
+            self.assertEqual(summary["severity"], "ok")
+
     def test_incident_summary_uses_failure_class_guidance_for_degraded_session(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             manager = StateManager(StateStore(Path(tmp) / "state.json"))

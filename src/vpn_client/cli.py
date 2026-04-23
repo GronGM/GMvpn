@@ -242,6 +242,7 @@ def main() -> int:
                     "reenabled_transports": tick_report.reenabled_transports,
                     "pending_ready_transports": tick_report.pending_ready_transports,
                     "pending_total": tick_report.pending_total,
+                    "incident_summary": tick_report.incident_summary,
                 }
             )
     supervisor_cycles: list[dict] = []
@@ -259,6 +260,7 @@ def main() -> int:
                 "pending_total": cycle.pending_total,
                 "pending_ready_transports": cycle.pending_ready_transports,
                 "reenabled_transports": cycle.reenabled_transports,
+                "incident_summary": cycle.incident_summary,
             }
             for cycle in supervisor_report.cycles
         ]
