@@ -148,6 +148,9 @@ class SessionOrchestrator:
                 apply_fn = self.network_stack.reconnect if self.network_stack.applied_state else self.network_stack.apply
                 applied = apply_fn(endpoint, network_policy)
                 self.dataplane.connect(endpoint)
+                health_report = self.health_monitor.check(endpoint)
+                if not health_report.healthy:
+                    raise DataPlaneError(health_report.failure_class, health_report.detail)
                 self.state = SessionState.CONNECTED
                 self.last_known_good_endpoint_id = endpoint.id
                 self.telemetry.record(
@@ -155,7 +158,7 @@ class SessionOrchestrator:
                     self.state,
                     endpoint_id=endpoint.id,
                     transport=endpoint.transport,
-                    detail="transport and network policy applied",
+                    detail="transport, network policy, and initial health check passed",
                 )
                 attempts.append(
                     ConnectionAttempt(
@@ -166,9 +169,6 @@ class SessionOrchestrator:
                         detail="connected",
                     )
                 )
-                health_report = self.health_monitor.check(endpoint)
-                if not health_report.healthy:
-                    raise DataPlaneError(health_report.failure_class, health_report.detail)
                 if self.state_manager:
                     self.state_manager.mark_success(endpoint.id)
                     self.state_manager.clear_transport_crash_streak(endpoint.transport)

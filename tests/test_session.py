@@ -257,6 +257,45 @@ class SessionOrchestratorTests(unittest.TestCase):
         self.assertEqual(report.state, SessionState.DEGRADED)
         self.assertEqual(report.failure_class, FailureClass.NETWORK_DOWN)
 
+    def test_health_failure_does_not_mark_connection_as_success(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            runtime_state = RuntimeState(Path(tmp) / "marker.json")
+            telemetry = TelemetryRecorder()
+            orchestrator = SessionOrchestrator(
+                default_transport_registry(),
+                ProbeEngine(),
+                network_stack=SimulatedNetworkStack(),
+                telemetry=telemetry,
+                dataplane=LinuxUserspaceDataPlane(dry_run=True),
+                runtime_state=runtime_state,
+            )
+            manifest = Manifest(
+                version=1,
+                generated_at="2026-04-23T00:00:00Z",
+                expires_at="2026-04-30T00:00:00Z",
+                features={},
+                transport_policy=TransportPolicy(preferred_order=["https"], retry_budget=1),
+                network_policy=NetworkPolicy(),
+                endpoints=[
+                    Endpoint(
+                        id="https-1",
+                        host="198.51.100.20",
+                        port=443,
+                        transport="https",
+                        region="eu-central",
+                        metadata={"dataplane_failure": "health"},
+                    ),
+                ],
+            )
+
+            report = orchestrator.connect(manifest)
+
+            self.assertEqual(report.state, SessionState.DEGRADED)
+            self.assertIsNone(orchestrator.last_known_good_endpoint_id)
+            self.assertIsNone(runtime_state.load_marker())
+            self.assertFalse(any(event.kind == "connect_succeeded" for event in telemetry.events))
+            self.assertEqual(report.attempts[-1].success, False)
+
     def test_orchestrator_supports_mixed_dataplane_manifest(self) -> None:
         manifest = Manifest(
             version=1,
