@@ -59,6 +59,14 @@ class SessionOrchestrator:
         self.state = SessionState.IDLE
         self.last_known_good_endpoint_id: str | None = None
 
+    def _cleanup_after_failed_attempt(self, transport: Transport, disconnect_network_stack: bool) -> None:
+        transport.disconnect()
+        if disconnect_network_stack:
+            self.network_stack.disconnect()
+        self.dataplane.disconnect()
+        if self.runtime_state:
+            self.runtime_state.clear()
+
     def connect(self, manifest: Manifest) -> SessionReport:
         self.state = SessionState.LOADING
         attempts: list[ConnectionAttempt] = []
@@ -74,9 +82,13 @@ class SessionOrchestrator:
 
         last_failure = FailureClass.UNKNOWN
         last_detail = "no endpoints available"
+        last_endpoint_id: str | None = None
+        last_transport: str | None = None
 
         for scheduled in scheduled_endpoints:
             endpoint = scheduled.endpoint
+            last_endpoint_id = endpoint.id
+            last_transport = endpoint.transport
             if scheduled.cooling_down:
                 self.telemetry.record(
                     "endpoint_cooling_down",
@@ -217,11 +229,7 @@ class SessionOrchestrator:
             except DataPlaneError as exc:
                 disabled_transport = False
                 runtime_snapshot = self.dataplane.runtime_snapshot()
-                transport.disconnect()
-                self.network_stack.disconnect()
-                self.dataplane.disconnect()
-                if self.runtime_state:
-                    self.runtime_state.clear()
+                self._cleanup_after_failed_attempt(transport, disconnect_network_stack=True)
                 if self.state_manager:
                     self.state_manager.mark_failure(endpoint.id, exc.failure_class, exc.detail)
                     if runtime_snapshot.get("crashed"):
@@ -274,10 +282,7 @@ class SessionOrchestrator:
                     else exc.detail
                 )
             except NetworkStackError as exc:
-                transport.disconnect()
-                self.dataplane.disconnect()
-                if self.runtime_state:
-                    self.runtime_state.clear()
+                self._cleanup_after_failed_attempt(transport, disconnect_network_stack=False)
                 if self.state_manager:
                     self.state_manager.mark_failure(endpoint.id, exc.failure_class, exc.detail)
                     if scheduled.pending_reenable:
@@ -312,11 +317,15 @@ class SessionOrchestrator:
             "session_degraded",
             self.state,
             last_failure,
+            endpoint_id=last_endpoint_id,
+            transport=last_transport,
             detail=last_detail,
         )
         return SessionReport(
             state=self.state,
             attempts=attempts,
+            selected_endpoint_id=last_endpoint_id,
+            selected_transport=last_transport,
             kill_switch_active=self.network_stack.kill_switch_active,
             failure_class=last_failure,
             detail=last_detail,

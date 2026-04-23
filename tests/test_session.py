@@ -544,6 +544,44 @@ class SessionOrchestratorTests(unittest.TestCase):
             self.assertEqual(summary["severity"], "warning")
             self.assertEqual(telemetry.events[-1].kind, "incident_summary")
 
+    def test_failed_connect_keeps_last_attempt_context_for_incident_visibility(self) -> None:
+        telemetry = TelemetryRecorder()
+        orchestrator = SessionOrchestrator(
+            default_transport_registry(),
+            ProbeEngine(),
+            network_stack=SimulatedNetworkStack(),
+            telemetry=telemetry,
+            dataplane=LinuxUserspaceDataPlane(dry_run=True),
+        )
+        manifest = Manifest(
+            version=1,
+            generated_at="2026-04-23T00:00:00Z",
+            expires_at="2026-04-30T00:00:00Z",
+            features={},
+            transport_policy=TransportPolicy(preferred_order=["https"], retry_budget=1),
+            network_policy=NetworkPolicy(),
+            endpoints=[
+                Endpoint(
+                    id="https-1",
+                    host="198.51.100.20",
+                    port=443,
+                    transport="https",
+                    region="eu-central",
+                    metadata={"dataplane_failure": "health"},
+                ),
+            ],
+        )
+
+        report = orchestrator.connect(manifest)
+
+        self.assertEqual(report.state, SessionState.DEGRADED)
+        self.assertEqual(report.selected_endpoint_id, "https-1")
+        self.assertEqual(report.selected_transport, "https")
+        degraded_event = telemetry.events[-1]
+        self.assertEqual(degraded_event.kind, "session_degraded")
+        self.assertEqual(degraded_event.endpoint_id, "https-1")
+        self.assertEqual(degraded_event.transport, "https")
+
     def test_monitor_connection_degrades_session_without_auto_reconnect(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             runtime_state = RuntimeState(Path(tmp) / "marker.json")
