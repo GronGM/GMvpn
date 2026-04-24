@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from vpn_client.incident import build_incident_summary
-from vpn_client.models import FailureClass, Manifest, NetworkPolicy, SessionState, TransportPolicy
+from vpn_client.models import FailureClass, FailureReasonCode, Manifest, NetworkPolicy, SessionState, TransportPolicy
 from vpn_client.state import StateManager, StateStore
 
 
@@ -173,6 +173,68 @@ class IncidentSummaryTests(unittest.TestCase):
             self.assertIn("disable_transport_wireguard", summary["active_disable_flags"])
             self.assertIn("disable_transport_wireguard", summary["active_mitigation_flags"])
             self.assertIn("disable_transport_wireguard", summary["mitigation_flag_expires_at"])
+            self.assertEqual(summary["primary_transport_issue"]["transport"], "wireguard")
+            self.assertTrue(summary["primary_transport_issue"]["disabled"])
+
+    def test_incident_summary_exposes_transport_focus_buckets(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            manager = StateManager(StateStore(Path(tmp) / "state.json"))
+            manager.record_transport_crash(
+                "https",
+                "backend crashed",
+                reason_code=FailureReasonCode.DATAPLANE_BACKEND_CRASHED,
+                threshold=1,
+            )
+            manager.record_transport_soft_failure(
+                "wireguard",
+                FailureClass.NETWORK_DOWN,
+                FailureReasonCode.DATAPLANE_HEALTHCHECK_FAILED,
+                threshold=5,
+            )
+
+            summary = build_incident_summary(
+                state_manager=manager,
+                report=DummyReport(
+                    state=SessionState.CONNECTED,
+                    selected_endpoint_id="edge-1",
+                    selected_transport="https",
+                ),
+                recovery_report=DummyRecoveryReport(stale_marker_found=False),
+                recovery_cleanup_enabled=False,
+                simulated_stale_runtime_endpoint_id=None,
+            )
+
+            self.assertEqual(summary["transport_focus"][0]["transport"], "https")
+            self.assertEqual(summary["transport_focus"][0]["crash_bucket"], "dataplane_backend_crashed")
+            self.assertEqual(summary["transport_focus"][1]["soft_fail_bucket"], "network_down:dataplane_healthcheck_failed")
+
+    def test_incident_summary_prioritizes_disabled_transport_issue_over_sorted_order(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            manager = StateManager(StateStore(Path(tmp) / "state.json"))
+            manager.record_transport_soft_failure(
+                "https",
+                FailureClass.NETWORK_DOWN,
+                FailureReasonCode.DATAPLANE_HEALTHCHECK_FAILED,
+                threshold=5,
+            )
+            manager.apply_failure_mitigation(FailureClass.UDP_BLOCKED, transport="wireguard")
+
+            summary = build_incident_summary(
+                state_manager=manager,
+                report=DummyReport(
+                    state=SessionState.DEGRADED,
+                    selected_endpoint_id="edge-1",
+                    selected_transport="https",
+                    failure_class=FailureClass.NETWORK_DOWN,
+                ),
+                recovery_report=DummyRecoveryReport(stale_marker_found=False),
+                recovery_cleanup_enabled=False,
+                simulated_stale_runtime_endpoint_id=None,
+            )
+
+            self.assertEqual(summary["transport_focus"][0]["transport"], "https")
+            self.assertEqual(summary["primary_transport_issue"]["transport"], "wireguard")
+            self.assertTrue(summary["primary_transport_issue"]["disabled"])
 
 
 if __name__ == "__main__":
