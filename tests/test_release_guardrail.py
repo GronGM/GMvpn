@@ -149,6 +149,10 @@ class ReleaseGuardrailTests(unittest.TestCase):
         failures = release_guardrail._check_incident_narrative_consistency()
         self.assertEqual(failures, [])
 
+    def test_structural_artifact_parity_passes(self) -> None:
+        failures = release_guardrail._check_structural_artifact_parity()
+        self.assertEqual(failures, [])
+
 
 if __name__ == "__main__":
     unittest.main()
