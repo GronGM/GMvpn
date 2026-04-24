@@ -189,6 +189,20 @@ def _parse_primary_transport_issue(value: str) -> dict[str, object]:
     return issue
 
 
+def _parse_incident_telemetry_detail(detail: str) -> dict[str, str] | None:
+    severity, separator, remainder = detail.partition(": ")
+    if not separator:
+        return None
+    headline, separator, recommended_action = remainder.partition("; ")
+    if not separator:
+        return None
+    return {
+        "severity": severity,
+        "headline": headline,
+        "recommended_action": recommended_action,
+    }
+
+
 def _check_release_artifact_policy() -> list[str]:
     failures: list[str] = []
 
@@ -340,6 +354,111 @@ def _check_release_artifact_policy() -> list[str]:
                     "artifact policy parity: CLI incident primary_transport_issue "
                     f"'{key}' was '{actual}', expected '{expected}' from support bundle"
                 )
+
+    return failures
+
+
+def _check_incident_narrative_consistency() -> list[str]:
+    failures: list[str] = []
+    degraded_manifest = {
+        "version": 1,
+        "generated_at": "2026-04-23T00:00:00Z",
+        "expires_at": "2026-04-30T00:00:00Z",
+        "schema_version": 1,
+        "features": {
+            "support_bundle_enabled": True,
+            "runtime_support_policy": {
+                "default": {"enforce_contract_match": False},
+            },
+            "session_health_policy": {
+                "default": {"checks": 0, "auto_reconnect": False, "failure_threshold": 2},
+            },
+        },
+        "transport_policy": {
+            "preferred_order": ["quic"],
+            "connect_timeout_ms": 2500,
+            "retry_budget": 1,
+            "probe_timeout_ms": 1000,
+        },
+        "network_policy": {
+            "tunnel_mode": "full",
+            "dns_mode": "vpn_only",
+            "kill_switch_enabled": True,
+            "ipv6_enabled": False,
+            "allow_lan_while_connected": False,
+        },
+        "endpoints": [
+            {
+                "id": "quic-1",
+                "host": "198.51.100.30",
+                "port": 443,
+                "transport": "quic",
+                "region": "eu-central",
+                "tags": [],
+                "metadata": {"simulated_failure": "tls"},
+            }
+        ],
+    }
+    degraded_state = {
+        "endpoint_health": {},
+        "last_connected_endpoint_id": None,
+        "incident_flags": {},
+        "incident_flag_expires_at": {},
+        "transport_crash_streaks": {},
+        "transport_crash_buckets": {},
+        "transport_crash_reasons": {},
+        "transport_soft_fail_streaks": {"quic": 1},
+        "transport_soft_fail_buckets": {"quic": "tls_interference:tls_handshake_failed"},
+        "transport_reenable_pending": {},
+        "transport_reenable_not_before": {},
+        "transport_reenable_fail_streaks": {},
+        "session_health_fail_streak": 0,
+        "session_health_fail_bucket": "",
+    }
+    returncode, stdout, bundle = _run_custom_cli_and_collect(
+        degraded_manifest,
+        state_payload=degraded_state,
+        args=("--platform", "simulated", "--dataplane", "null"),
+    )
+    if returncode != 1:
+        return [f"incident narrative consistency: degraded CLI scenario returned {returncode}, expected 1"]
+
+    parsed = _parse_cli_output(stdout)
+    cli_incident = parsed.get("incident_summary")
+    if not isinstance(cli_incident, dict):
+        return ["incident narrative consistency: degraded CLI scenario did not print incident_summary block"]
+
+    bundle_incident = bundle["extra"]["incident_summary"]
+    telemetry_event = next(
+        (event for event in reversed(bundle["events"]) if event.get("kind") == "incident_summary"),
+        None,
+    )
+    if telemetry_event is None:
+        return ["incident narrative consistency: support bundle is missing incident_summary telemetry event"]
+
+    telemetry_narrative = _parse_incident_telemetry_detail(str(telemetry_event.get("detail", "")))
+    if telemetry_narrative is None:
+        return ["incident narrative consistency: telemetry incident_summary detail is not parseable"]
+
+    narrative_pairs = (
+        ("severity", str(bundle_incident["severity"]), str(cli_incident.get("severity")), telemetry_narrative["severity"]),
+        ("headline", str(bundle_incident["headline"]), str(cli_incident.get("headline")), telemetry_narrative["headline"]),
+        (
+            "recommended_action",
+            str(bundle_incident["recommended_action"]),
+            str(cli_incident.get("recommended_action")),
+            telemetry_narrative["recommended_action"],
+        ),
+    )
+    for field, bundle_value, cli_value, telemetry_value in narrative_pairs:
+        if cli_value != bundle_value:
+            failures.append(
+                f"incident narrative consistency: CLI field '{field}' was '{cli_value}', expected '{bundle_value}'"
+            )
+        if telemetry_value != bundle_value:
+            failures.append(
+                f"incident narrative consistency: telemetry field '{field}' was '{telemetry_value}', expected '{bundle_value}'"
+            )
 
     return failures
 
@@ -516,6 +635,7 @@ def main() -> int:
         failures.extend(_check_cache_not_tracked())
         failures.extend(_check_linux_xray_smoke_gate())
         failures.extend(_check_release_artifact_policy())
+        failures.extend(_check_incident_narrative_consistency())
         if args.run_local_checks:
             failures.extend(_run_local_checks())
 
@@ -531,6 +651,7 @@ def main() -> int:
     print("- working tree is clean and .cache is not tracked")
     print("- linux+xray MVP contour smoke gate passed")
     print("- CLI and support bundle stay aligned on release-facing policy and incident facts")
+    print("- incident narrative stays aligned across CLI, telemetry, and support bundle")
     if args.run_local_checks:
         print("- local compileall and unittest checks passed")
     return 0

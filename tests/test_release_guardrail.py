@@ -129,6 +129,26 @@ class ReleaseGuardrailTests(unittest.TestCase):
         failures = release_guardrail._check_release_artifact_policy()
         self.assertEqual(failures, [])
 
+    def test_parse_incident_telemetry_detail_extracts_narrative_fields(self) -> None:
+        parsed = release_guardrail._parse_incident_telemetry_detail(
+            "warning: session did not connect and needs investigation; Retry using a transport on a different protocol or port profile and verify upstream filtering."
+        )
+
+        self.assertEqual(
+            parsed,
+            {
+                "severity": "warning",
+                "headline": "session did not connect and needs investigation",
+                "recommended_action": (
+                    "Retry using a transport on a different protocol or port profile and verify upstream filtering."
+                ),
+            },
+        )
+
+    def test_incident_narrative_consistency_passes(self) -> None:
+        failures = release_guardrail._check_incident_narrative_consistency()
+        self.assertEqual(failures, [])
+
 
 if __name__ == "__main__":
     unittest.main()
