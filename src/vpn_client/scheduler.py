@@ -57,12 +57,15 @@ class EndpointScheduler:
             ]
             candidate_endpoints = platform_filtered or candidate_endpoints
         if self.state_manager:
+            # Keep all prior narrowing, especially client-platform filtering. Local
+            # transport mitigations must not reintroduce endpoints that are not
+            # valid for the current platform.
             filtered = [
                 endpoint
-                for endpoint in manifest.endpoints
+                for endpoint in candidate_endpoints
                 if not self.state_manager.incident_flag(f"disable_transport_{endpoint.transport}")
             ]
-            candidate_endpoints = filtered or manifest.endpoints
+            candidate_endpoints = filtered or candidate_endpoints
 
         scheduled = [build(endpoint) for endpoint in candidate_endpoints]
 
