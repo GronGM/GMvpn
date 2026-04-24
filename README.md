@@ -23,6 +23,22 @@ Compatibility and migration rules are documented in [docs/schema-compatibility.m
 
 This is not a production VPN yet. It is the control-plane and orchestration skeleton that a production-grade client can grow on top of.
 
+## Honest MVP Target
+
+The first honest MVP runtime target is now explicit:
+
+- `client-platform=linux`
+- linux platform adapter
+- `dataplane=xray-core`
+
+This is the contour we treat as the first release-track runtime for hardening and support.
+
+Everything else should be read more conservatively:
+
+- `linux-userspace` remains a useful reference and debugging path, but it is not the first MVP release contour;
+- `windows`, `macos`, and `android` follow the same product model but still depend on placeholder-level platform adapters in this repository today;
+- `ios` remains bridge-only until a real Apple `Network Extension` runtime exists.
+
 ## Repository Layout
 
 - `src/vpn_client/` - application core
@@ -116,6 +132,9 @@ Current backend policy:
 - `ios` defaults to `ios-bridge`, which currently renders a tunnel contract but still stops before a real Apple runtime starts.
 
 This keeps the architecture honest: `iOS` is now a separate contract path in the codebase, but still remains a separate engineering track until a dedicated bridge/runtime exists.
+
+The CLI now also classifies the selected runtime contour into a support tier and exports that assessment in the support bundle.
+For the current repository state, only the explicit `linux + xray-core + linux adapter` contour is considered `mvp-supported`.
 
 ## Platform Adapters
 

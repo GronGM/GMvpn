@@ -83,6 +83,8 @@ class CliTests(unittest.TestCase):
             self.assertIn("state penalty applied", payload["extra"]["startup_recovery"]["actions"])
             self.assertEqual(payload["extra"]["session_health_checks"], 0)
             self.assertFalse(payload["extra"]["session_health_auto_reconnect"])
+            self.assertEqual(payload["extra"]["runtime_support"]["tier"], "development-only")
+            self.assertFalse(payload["extra"]["runtime_support"]["in_mvp_scope"])
             self.assertEqual(
                 payload["extra"]["transport_recovery"]["https"]["crash_reason"],
                 "stale runtime marker recovered on startup",
@@ -160,6 +162,7 @@ class CliTests(unittest.TestCase):
             self.assertEqual(exit_code, 1)
             self.assertIn("incident_summary:", output)
             self.assertIn("session_health_checks=0", output)
+            self.assertIn("runtime_support_tier=development-only", output)
             self.assertIn("severity=warning", output)
             self.assertIn("failure_class=tls_interference", output)
             self.assertIn(
@@ -246,9 +249,95 @@ class CliTests(unittest.TestCase):
             self.assertEqual(exit_code, 0)
             self.assertIn("session_health_checks=1", output)
             self.assertIn("session_health_auto_reconnect=True", output)
+            self.assertIn("runtime_support_tier=development-only", output)
             self.assertEqual(payload["extra"]["session_health_checks"], 1)
             self.assertTrue(payload["extra"]["session_health_auto_reconnect"])
+            self.assertEqual(payload["extra"]["runtime_support"]["tier"], "development-only")
             self.assertEqual(payload["extra"]["session_health_policy_resolved"]["checks"], 1)
+
+    def test_cli_marks_linux_xray_runtime_as_mvp_supported(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            private_pem, public_pem = generate_keypair()
+            manifest = {
+                "version": 1,
+                "generated_at": "2026-04-23T00:00:00Z",
+                "expires_at": "2026-04-30T00:00:00Z",
+                "features": {"support_bundle_enabled": True},
+                "transport_policy": {
+                    "preferred_order": ["https"],
+                    "connect_timeout_ms": 2500,
+                    "retry_budget": 1,
+                    "probe_timeout_ms": 1000,
+                },
+                "network_policy": {
+                    "tunnel_mode": "full",
+                    "dns_mode": "vpn_only",
+                    "kill_switch_enabled": True,
+                    "ipv6_enabled": False,
+                    "allow_lan_while_connected": False,
+                },
+                "endpoints": [
+                    {
+                        "id": "desktop-1",
+                        "host": "198.51.100.50",
+                        "port": 443,
+                        "transport": "https",
+                        "region": "eu-central",
+                        "tags": [],
+                        "metadata": {
+                            "dataplane": "xray-core",
+                            "xray_protocol": "vless",
+                            "xray_user_id": "11111111-1111-1111-1111-111111111111",
+                            "xray_stream_network": "tcp",
+                            "xray_security": "tls",
+                            "xray_server_name": "cdn.example.net",
+                            "supported_client_platforms": ["linux"],
+                        },
+                    }
+                ],
+            }
+            manifest["signature"] = sign_payload(private_pem, canonical_manifest_bytes(manifest))
+            manifest_path = tmp_path / "manifest.json"
+            public_key_path = tmp_path / "public.pem"
+            manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+            public_key_path.write_bytes(public_pem)
+            stdout = io.StringIO()
+
+            argv = [
+                "vpn-client",
+                "--manifest",
+                str(manifest_path),
+                "--public-key",
+                str(public_key_path),
+                "--cache-dir",
+                str(tmp_path / "cache"),
+                "--state-file",
+                str(tmp_path / "state.json"),
+                "--runtime-marker",
+                str(tmp_path / "runtime-marker.json"),
+                "--backend-state-file",
+                str(tmp_path / "backend-state.json"),
+                "--support-bundle",
+                str(tmp_path / "bundle.json"),
+                "--platform",
+                "linux",
+                "--client-platform",
+                "linux",
+                "--dataplane",
+                "xray-core",
+            ]
+
+            with patch("sys.argv", argv), contextlib.redirect_stdout(stdout):
+                exit_code = cli.main()
+
+            output = stdout.getvalue()
+            payload = json.loads((tmp_path / "bundle.json").read_text(encoding="utf-8"))
+            self.assertEqual(exit_code, 0)
+            self.assertIn("runtime_support_tier=mvp-supported", output)
+            self.assertIn("runtime_support_in_mvp_scope=True", output)
+            self.assertEqual(payload["extra"]["runtime_support"]["tier"], "mvp-supported")
+            self.assertTrue(payload["extra"]["runtime_support"]["in_mvp_scope"])
 
     def test_cli_uses_local_incident_guidance_file_override(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

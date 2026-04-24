@@ -15,6 +15,7 @@ from vpn_client.policy import PolicyEngine, validate_incident_guidance_overrides
 from vpn_client.probe import ProbeEngine
 from vpn_client.recovery import StartupRecovery
 from vpn_client.runtime import RuntimeState
+from vpn_client.runtime_support import assess_runtime_support
 from vpn_client.runtime_tick import RuntimeTickPolicy
 from vpn_client.security import Ed25519Verifier
 from vpn_client.session import SessionOrchestrator
@@ -257,6 +258,11 @@ def main() -> int:
             )
     recovery = StartupRecovery(runtime_state, network_stack, dataplane, telemetry, state_manager=state_manager)
     recovery_report = recovery.recover(cleanup_stale_runtime=recovery_cleanup_enabled)
+    runtime_support = assess_runtime_support(
+        client_platform=client_platform,
+        dataplane_name=args.dataplane,
+        platform_adapter_name=getattr(network_stack, "platform_name", args.platform),
+    )
     orchestrator = SessionOrchestrator(
         transports=default_transport_registry(),
         probe_engine=ProbeEngine(),
@@ -355,6 +361,11 @@ def main() -> int:
         print(f"tunnel_mode={report.applied_tunnel_mode}")
     print(f"session_health_checks={effective_health_checks}")
     print(f"session_health_auto_reconnect={effective_auto_reconnect}")
+    print(f"runtime_support_tier={runtime_support.tier}")
+    print(f"runtime_support_summary={runtime_support.summary}")
+    print(f"runtime_support_in_mvp_scope={runtime_support.in_mvp_scope}")
+    if runtime_support.caveats:
+        print(f"runtime_support_caveats={' | '.join(runtime_support.caveats)}")
     print(f"kill_switch_active={report.kill_switch_active}")
     print(f"startup_recovered={recovery_report.stale_marker_found and recovery_cleanup_enabled}")
     if local_incident_guidance_source is not None:
@@ -429,6 +440,15 @@ def main() -> int:
                 "last_connected_endpoint_id": state_manager.state.last_connected_endpoint_id,
                 "session_health_checks": effective_health_checks,
                 "session_health_auto_reconnect": effective_auto_reconnect,
+                "runtime_support": {
+                    "tier": runtime_support.tier,
+                    "summary": runtime_support.summary,
+                    "in_mvp_scope": runtime_support.in_mvp_scope,
+                    "caveats": runtime_support.caveats,
+                    "client_platform": client_platform.value,
+                    "dataplane": args.dataplane,
+                    "platform_adapter": getattr(network_stack, "platform_name", args.platform),
+                },
                 "session_health_policy_resolved": {
                     "checks": effective_health_checks,
                     "auto_reconnect": effective_auto_reconnect,
