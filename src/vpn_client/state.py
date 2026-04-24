@@ -5,7 +5,7 @@ from dataclasses import asdict, dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from vpn_client.models import FailureClass
+from vpn_client.models import FailureClass, Manifest
 
 
 @dataclass(slots=True)
@@ -41,24 +41,26 @@ class StateStore:
     def load(self) -> PersistentState:
         if not self.path.exists():
             return PersistentState()
-
-        payload = json.loads(self.path.read_text(encoding="utf-8"))
-        endpoint_health = {
-            endpoint_id: EndpointHealth(**value)
-            for endpoint_id, value in payload.get("endpoint_health", {}).items()
-        }
-        return PersistentState(
-            endpoint_health=endpoint_health,
-            incident_flags=payload.get("incident_flags", {}),
-            incident_flag_expires_at=payload.get("incident_flag_expires_at", {}),
-            transport_crash_streaks=payload.get("transport_crash_streaks", {}),
-            transport_crash_reasons=payload.get("transport_crash_reasons", {}),
-            transport_soft_fail_streaks=payload.get("transport_soft_fail_streaks", {}),
-            transport_reenable_pending=payload.get("transport_reenable_pending", {}),
-            transport_reenable_not_before=payload.get("transport_reenable_not_before", {}),
-            transport_reenable_fail_streaks=payload.get("transport_reenable_fail_streaks", {}),
-            last_connected_endpoint_id=payload.get("last_connected_endpoint_id"),
-        )
+        try:
+            payload = json.loads(self.path.read_text(encoding="utf-8"))
+            endpoint_health = {
+                endpoint_id: EndpointHealth(**value)
+                for endpoint_id, value in payload.get("endpoint_health", {}).items()
+            }
+            return PersistentState(
+                endpoint_health=endpoint_health,
+                incident_flags=payload.get("incident_flags", {}),
+                incident_flag_expires_at=payload.get("incident_flag_expires_at", {}),
+                transport_crash_streaks=payload.get("transport_crash_streaks", {}),
+                transport_crash_reasons=payload.get("transport_crash_reasons", {}),
+                transport_soft_fail_streaks=payload.get("transport_soft_fail_streaks", {}),
+                transport_reenable_pending=payload.get("transport_reenable_pending", {}),
+                transport_reenable_not_before=payload.get("transport_reenable_not_before", {}),
+                transport_reenable_fail_streaks=payload.get("transport_reenable_fail_streaks", {}),
+                last_connected_endpoint_id=payload.get("last_connected_endpoint_id"),
+            )
+        except (json.JSONDecodeError, TypeError, ValueError):
+            return PersistentState()
 
     def save(self, state: PersistentState) -> None:
         payload = {
@@ -118,6 +120,60 @@ class StateManager:
         health.updated_at = now.isoformat()
         self.state.endpoint_health[endpoint_id] = health
         self.state.last_connected_endpoint_id = endpoint_id
+        self.store.save(self.state)
+
+    def reconcile_manifest(self, manifest: Manifest) -> None:
+        endpoint_ids = {endpoint.id for endpoint in manifest.endpoints}
+        transports = {endpoint.transport for endpoint in manifest.endpoints}
+
+        self.state.endpoint_health = {
+            endpoint_id: health
+            for endpoint_id, health in self.state.endpoint_health.items()
+            if endpoint_id in endpoint_ids
+        }
+        if self.state.last_connected_endpoint_id not in endpoint_ids:
+            self.state.last_connected_endpoint_id = None
+
+        self.state.transport_crash_streaks = {
+            transport: value
+            for transport, value in self.state.transport_crash_streaks.items()
+            if transport in transports
+        }
+        self.state.transport_crash_reasons = {
+            transport: value
+            for transport, value in self.state.transport_crash_reasons.items()
+            if transport in transports
+        }
+        self.state.transport_soft_fail_streaks = {
+            transport: value
+            for transport, value in self.state.transport_soft_fail_streaks.items()
+            if transport in transports
+        }
+        self.state.transport_reenable_pending = {
+            transport: value
+            for transport, value in self.state.transport_reenable_pending.items()
+            if transport in transports
+        }
+        self.state.transport_reenable_not_before = {
+            transport: value
+            for transport, value in self.state.transport_reenable_not_before.items()
+            if transport in transports
+        }
+        self.state.transport_reenable_fail_streaks = {
+            transport: value
+            for transport, value in self.state.transport_reenable_fail_streaks.items()
+            if transport in transports
+        }
+        self.state.incident_flags = {
+            name: enabled
+            for name, enabled in self.state.incident_flags.items()
+            if not name.startswith("disable_transport_") or name.removeprefix("disable_transport_") in transports
+        }
+        self.state.incident_flag_expires_at = {
+            name: value
+            for name, value in self.state.incident_flag_expires_at.items()
+            if not name.startswith("disable_transport_") or name.removeprefix("disable_transport_") in transports
+        }
         self.store.save(self.state)
 
     def clear_transport_crash_streak(self, transport: str) -> None:
@@ -195,6 +251,16 @@ class StateManager:
         health.updated_at = now.isoformat()
         self.state.endpoint_health[endpoint_id] = health
         self.store.save(self.state)
+
+    def apply_failure_mitigation(self, failure_class: FailureClass, transport: str | None = None) -> list[str]:
+        actions: list[str] = []
+        if failure_class is FailureClass.DNS_INTERFERENCE:
+            self.set_incident_flag_with_ttl("force_system_dns_fallback", True, ttl_seconds=300)
+            actions.append("force_system_dns_fallback")
+        if failure_class is FailureClass.UDP_BLOCKED and transport:
+            self.set_incident_flag_with_ttl(f"disable_transport_{transport}", True, ttl_seconds=180)
+            actions.append(f"disable_transport_{transport}")
+        return actions
 
     def mark_stale_runtime(
         self,
