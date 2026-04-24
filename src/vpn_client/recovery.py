@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from vpn_client.dataplane import DataPlaneBackend
-from vpn_client.models import FailureClass
+from vpn_client.models import FailureClass, FailureReasonCode
 from vpn_client.platform_adapters import PlatformNetworkAdapter
 from vpn_client.runtime import RuntimeMarker, RuntimeState
 from vpn_client.state import StateManager
@@ -39,16 +39,19 @@ class StartupRecovery:
 
         actions = [f"stale runtime marker for {marker.endpoint_id}"]
         if cleanup_stale_runtime:
-            self._cleanup(marker)
+            cleanup_notes = self._cleanup(marker)
             if self.state_manager:
                 transport_disabled = self.state_manager.mark_stale_runtime(marker.endpoint_id, marker.transport)
                 actions.append("state penalty applied")
                 if transport_disabled:
                     actions.append(f"transport {marker.transport} disabled locally")
-            actions.extend(["dataplane disconnect", "network stack disconnect", "runtime marker clear"])
+            actions.extend(["dataplane disconnect", "network stack disconnect"])
+            actions.extend(cleanup_notes)
+            actions.append("runtime marker clear")
         return RecoveryReport(stale_marker_found=True, actions=actions)
 
-    def _cleanup(self, marker: RuntimeMarker) -> None:
+    def _cleanup(self, marker: RuntimeMarker) -> list[str]:
+        cleanup_notes: list[str] = []
         self.telemetry.record(
             "stale_runtime_cleanup",
             SessionState.IDLE,
@@ -61,12 +64,34 @@ class StartupRecovery:
         if self.network_stack.supports_startup_reconciliation():
             reconciliation = self.network_stack.reconcile_startup()
             if reconciliation and reconciliation.commands:
+                detail = f"prepared {len(reconciliation.commands)} startup cleanup commands"
+                if reconciliation.partial_failure:
+                    detail += "; cleanup remained partial"
                 self.telemetry.record(
                     f"{self.network_stack.platform_name}_startup_reconciliation",
                     SessionState.IDLE,
                     endpoint_id=marker.endpoint_id,
                     transport=marker.transport,
-                    detail=f"prepared {len(reconciliation.commands)} startup cleanup commands",
+                    detail=detail,
                 )
         self.network_stack.disconnect()
+        last_execution = getattr(self.network_stack, "last_execution", None)
+        if last_execution and getattr(last_execution, "action", None) == "disconnect" and last_execution.cleanup_incomplete:
+            reason_code = None
+            if last_execution.failure_reason_code is not None:
+                try:
+                    reason_code = FailureReasonCode(last_execution.failure_reason_code)
+                except ValueError:
+                    reason_code = None
+            self.telemetry.record(
+                f"{self.network_stack.platform_name}_disconnect_cleanup",
+                SessionState.IDLE,
+                FailureClass.NETWORK_DOWN,
+                reason_code=reason_code,
+                endpoint_id=marker.endpoint_id,
+                transport=marker.transport,
+                detail=last_execution.failure_detail or "network stack disconnect left partial cleanup",
+            )
+            cleanup_notes.append("network stack cleanup incomplete")
         self.runtime_state.clear()
+        return cleanup_notes

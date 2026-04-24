@@ -139,11 +139,48 @@ class LinuxNetworkStackTests(unittest.TestCase):
             command_exists=lambda _name: None,
         )
 
-        with self.assertRaises(NetworkStackError) as ctx:
-            stack.reconcile_startup()
+        report = stack.reconcile_startup()
 
-        self.assertEqual(ctx.exception.reason_code, FailureReasonCode.PLATFORM_TOOL_MISSING)
+        self.assertFalse(report.executed)
+        self.assertTrue(report.partial_failure)
+        self.assertEqual(report.failure_reason_code, FailureReasonCode.PLATFORM_TOOL_MISSING.value)
         self.assertEqual(stack.last_reconciliation.missing_commands, ["ip", "nft", "resolvectl"])
+
+    def test_linux_stack_disconnect_reports_partial_cleanup_without_raising(self) -> None:
+        seen: list[list[str]] = []
+
+        def runner(command: list[str]) -> None:
+            seen.append(command)
+            if command[:3] == ["ip", "route", "del"]:
+                raise RuntimeError("route still busy")
+
+        stack = LinuxNetworkStack(
+            interface_name="tun42",
+            dry_run=False,
+            command_runner=runner,
+            command_exists=lambda _name: "/usr/bin/fake",
+        )
+        endpoint = Endpoint(
+            id="edge-1",
+            host="198.51.100.20",
+            port=443,
+            transport="https",
+            region="eu-central",
+        )
+        policy = NetworkPolicy(
+            tunnel_mode=TunnelMode.FULL,
+            dns_mode=DnsMode.VPN_ONLY,
+            kill_switch_enabled=True,
+            ipv6_enabled=False,
+        )
+
+        stack.apply(endpoint, policy)
+        stack.disconnect()
+
+        self.assertTrue(stack.last_execution.cleanup_incomplete)
+        self.assertEqual(stack.last_execution.failure_reason_code, FailureReasonCode.ROUTE_PROGRAMMING_FAILED.value)
+        self.assertIn(["ip", "link", "set", "tun42", "down"], seen)
+        self.assertEqual(stack.last_execution.failed_commands[0][:3], ["ip", "route", "del"])
 
 
 if __name__ == "__main__":
