@@ -41,6 +41,47 @@ class TelemetryRecorderTests(unittest.TestCase):
         self.assertEqual(payload["events"][1]["primary_transport_issue"]["transport"], "quic")
         self.assertEqual(payload["extra"]["version"], 1)
 
+    def test_export_support_bundle_redacts_sensitive_extra_fields(self) -> None:
+        recorder = TelemetryRecorder()
+        recorder.record(
+            "dataplane_failed",
+            SessionState.DEGRADED,
+            FailureClass.NETWORK_DOWN,
+            reason_code=FailureReasonCode.DATAPLANE_BACKEND_CRASHED,
+            detail="authorization=Bearer super-secret-token password=hunter2",
+        )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = recorder.export_support_bundle(
+                Path(tmp) / "bundle.json",
+                extra={
+                    "dataplane_runtime": {
+                        "stdout_tail": "boot ok " + ("x" * 300),
+                        "stderr_tail": (
+                            "password=hunter2 "
+                            "token=abcd1234 "
+                            "11111111-1111-1111-1111-111111111111 "
+                            + ("y" * 220)
+                        ),
+                    },
+                    "backend_state_record": {
+                        "token": "abcd1234",
+                        "authorization": "Bearer super-secret-token",
+                    },
+                },
+            )
+            payload = json.loads(path.read_text(encoding="utf-8"))
+
+        self.assertIn("authorization=[redacted]", payload["events"][0]["detail"])
+        self.assertIn("password=[redacted]", payload["events"][0]["detail"])
+        self.assertEqual(payload["extra"]["backend_state_record"]["token"], "[redacted]")
+        self.assertEqual(payload["extra"]["backend_state_record"]["authorization"], "[redacted]")
+        self.assertIn("password=[redacted]", payload["extra"]["dataplane_runtime"]["stderr_tail"])
+        self.assertIn("token=[redacted]", payload["extra"]["dataplane_runtime"]["stderr_tail"])
+        self.assertIn("[redacted-uuid]", payload["extra"]["dataplane_runtime"]["stderr_tail"])
+        self.assertLessEqual(len(payload["extra"]["dataplane_runtime"]["stdout_tail"]), 200)
+        self.assertLessEqual(len(payload["extra"]["dataplane_runtime"]["stderr_tail"]), 200)
+
 
 if __name__ == "__main__":
     unittest.main()

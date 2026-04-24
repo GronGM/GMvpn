@@ -71,6 +71,7 @@ It is intentionally narrower than a full cross-platform product release.
 - Confirm crash and soft-failure disable policy values are bounded and visible for the transports you expect to support.
 - Confirm `incident_summary.primary_transport_issue` is populated for degraded scenarios where one transport is the obvious local focus.
 - Confirm bundle output remains bounded and does not dump unreviewed sensitive material.
+- Confirm support bundle redacts secret-like values from exported runtime output and diagnostic extras.
 
 ## Operator-Facing Sanity Check
 
