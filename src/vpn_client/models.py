@@ -74,6 +74,14 @@ class DnsMode(str, Enum):
     SYSTEM_FALLBACK = "system_fallback"
 
 
+class PlatformSupportStatus(str, Enum):
+    MVP_SUPPORTED = "mvp-supported"
+    PROTOTYPE = "prototype"
+    PLANNED = "planned"
+    BRIDGE_ONLY = "bridge-only"
+    DEVELOPMENT_ONLY = "development-only"
+
+
 @dataclass(slots=True)
 class PlatformCapability:
     platform: str
