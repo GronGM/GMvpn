@@ -21,8 +21,12 @@ class RuntimeState:
     def load_marker(self) -> RuntimeMarker | None:
         if not self.marker_path.exists():
             return None
-        payload = json.loads(self.marker_path.read_text(encoding="utf-8"))
-        return RuntimeMarker(**payload)
+        try:
+            payload = json.loads(self.marker_path.read_text(encoding="utf-8"))
+            return RuntimeMarker(**payload)
+        except (json.JSONDecodeError, TypeError, ValueError):
+            self.clear()
+            return None
 
     def mark_active(self, endpoint_id: str, transport: str) -> None:
         marker = RuntimeMarker(
