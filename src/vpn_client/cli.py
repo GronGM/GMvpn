@@ -262,6 +262,7 @@ def main() -> int:
         client_platform=client_platform,
         dataplane_name=args.dataplane,
         platform_adapter_name=getattr(network_stack, "platform_name", args.platform),
+        platform_capability=manifest.platform_capabilities.get(client_platform.value),
     )
     orchestrator = SessionOrchestrator(
         transports=default_transport_registry(),
@@ -448,6 +449,15 @@ def main() -> int:
                     "client_platform": client_platform.value,
                     "dataplane": args.dataplane,
                     "platform_adapter": getattr(network_stack, "platform_name", args.platform),
+                    "declared_platform_capability": (
+                        {
+                            "status": manifest.platform_capabilities[client_platform.value].status,
+                            "supported_dataplanes": manifest.platform_capabilities[client_platform.value].supported_dataplanes,
+                            "network_adapter": manifest.platform_capabilities[client_platform.value].network_adapter,
+                        }
+                        if client_platform.value in manifest.platform_capabilities
+                        else None
+                    ),
                 },
                 "session_health_policy_resolved": {
                     "checks": effective_health_checks,
