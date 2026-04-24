@@ -24,6 +24,8 @@ If `runtime_support.in_mvp_scope` is `false`, treat the incident as outside the 
 Read these support bundle fields before changing anything:
 
 - `incident_summary`
+- `events[*].incident_severity`
+- `events[*].primary_transport_issue`
 - `runtime_support`
 - `startup_recovery`
 - `transport_recovery`

@@ -18,6 +18,8 @@ class TelemetryEvent:
     endpoint_id: str | None = None
     transport: str | None = None
     detail: str = ""
+    incident_severity: str | None = None
+    primary_transport_issue: dict[str, object] | None = None
 
 
 class TelemetryRecorder:
@@ -34,6 +36,8 @@ class TelemetryRecorder:
         endpoint_id: str | None = None,
         transport: str | None = None,
         detail: str = "",
+        incident_severity: str | None = None,
+        primary_transport_issue: dict[str, object] | None = None,
     ) -> None:
         event = TelemetryEvent(
             ts=datetime.now(timezone.utc).isoformat(),
@@ -44,6 +48,8 @@ class TelemetryRecorder:
             endpoint_id=endpoint_id,
             transport=transport,
             detail=detail[:160],
+            incident_severity=incident_severity,
+            primary_transport_issue=primary_transport_issue,
         )
         self.events.append(event)
         if len(self.events) > self.max_events:

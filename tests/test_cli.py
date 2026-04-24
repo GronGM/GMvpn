@@ -63,6 +63,11 @@ class CliTests(unittest.TestCase):
             self.assertEqual(payload["events"][-1]["kind"], "incident_summary")
             self.assertEqual(payload["events"][-1]["session_state"], "connected")
             self.assertEqual(payload["events"][-1]["failure_class"], "none")
+            self.assertEqual(payload["events"][-1]["incident_severity"], "warning")
+            self.assertEqual(
+                payload["events"][-1]["primary_transport_issue"],
+                payload["extra"]["incident_summary"]["primary_transport_issue"],
+            )
             self.assertIn("startup recovery handled a stale runtime marker", payload["events"][-1]["detail"])
             self.assertEqual(
                 payload["extra"]["incident_summary"]["headline"],
@@ -192,6 +197,8 @@ class CliTests(unittest.TestCase):
             self.assertNotIn("primary_transport_issue=", output)
             self.assertEqual(payload["events"][-1]["kind"], "incident_summary")
             self.assertEqual(payload["events"][-1]["failure_class"], "tls_interference")
+            self.assertEqual(payload["events"][-1]["incident_severity"], "warning")
+            self.assertIsNone(payload["events"][-1]["primary_transport_issue"])
 
     def test_cli_resolves_manifest_session_health_policy_defaults(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -711,6 +718,8 @@ class CliTests(unittest.TestCase):
                 str(tmp_path / "runtime-marker.json"),
                 "--backend-state-file",
                 str(tmp_path / "backend-state.json"),
+                "--support-bundle",
+                str(tmp_path / "bundle.json"),
                 "--ios-contract-dir",
                 str(tmp_path / "ios-bridge"),
                 "--platform",
@@ -732,6 +741,9 @@ class CliTests(unittest.TestCase):
                 "primary_transport_issue=https disabled=False pending_reenable=False crash_bucket=None soft_fail_bucket=unknown:dataplane_backend_unsupported",
                 output,
             )
+            payload = json.loads((tmp_path / "bundle.json").read_text(encoding="utf-8"))
+            self.assertEqual(payload["events"][-1]["incident_severity"], "critical")
+            self.assertEqual(payload["events"][-1]["primary_transport_issue"]["transport"], "https")
 
     def test_cli_provider_profile_selects_platform_specific_endpoint(self) -> None:
         root = Path(__file__).resolve().parents[1]
