@@ -17,7 +17,16 @@ from vpn_client.desktop_policy import (
     endpoint_declares_desktop_policy,
     validate_desktop_policy_endpoint_metadata,
 )
-from vpn_client.models import DnsMode, Endpoint, Manifest, NetworkPolicy, PlatformCapability, TransportPolicy, TunnelMode
+from vpn_client.models import (
+    DnsMode,
+    Endpoint,
+    Manifest,
+    NetworkPolicy,
+    PlatformCapability,
+    PlatformSupportStatus,
+    TransportPolicy,
+    TunnelMode,
+)
 from vpn_client.policy import validate_incident_guidance_overrides, validate_session_health_policy
 from vpn_client.security import Ed25519Verifier
 from vpn_client.ios_bridge import (
@@ -189,6 +198,7 @@ def _validate_platform_capabilities(capabilities: dict[str, PlatformCapability])
     valid_platforms = {platform.value for platform in ClientPlatform}
     valid_dataplanes = {"null", "linux-userspace", "xray-core", "ios-bridge", "routed"}
     valid_adapters = {"simulated", "linux", "windows", "macos", "android", "ios"}
+    valid_statuses = {status.value for status in PlatformSupportStatus}
     for platform_name, capability in capabilities.items():
         if platform_name not in valid_platforms:
             raise ManifestError(f"unknown platform capability '{platform_name}'")
@@ -204,6 +214,10 @@ def _validate_platform_capabilities(capabilities: dict[str, PlatformCapability])
         if capability.network_adapter not in valid_adapters:
             raise ManifestError(
                 f"platform capability '{platform_name}' references unsupported network adapter '{capability.network_adapter}'"
+            )
+        if capability.status not in valid_statuses:
+            raise ManifestError(
+                f"platform capability '{platform_name}' references unsupported status '{capability.status}'"
             )
 
 
