@@ -13,7 +13,7 @@ if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
 from vpn_client.config import canonical_manifest_bytes
-from vpn_client.provider_compiler import compile_logical_server_variants
+from vpn_client.provider_compiler import build_provider_profile_manifest
 from vpn_client.security import generate_keypair, sign_payload
 
 
@@ -228,26 +228,23 @@ def main() -> None:
         ],
     }
 
-    provider_profile_manifest = {
-        "version": 1,
-        "schema_version": 1,
-        "provider_profile_schema_version": 1,
-        "generated_at": "2026-04-23T00:00:00Z",
-        "expires_at": "2026-04-30T00:00:00Z",
-        "platform_capabilities": manifest["platform_capabilities"],
-        "features": {
-            "support_bundle_enabled": True,
-            "profile_kind": "provider-profile",
-        },
-        "network_policy": manifest["network_policy"],
-        "transport_policy": {
+    provider_profile_manifest = build_provider_profile_manifest(
+        version=1,
+        schema_version=1,
+        provider_profile_schema_version=1,
+        generated_at="2026-04-23T00:00:00Z",
+        expires_at="2026-04-30T00:00:00Z",
+        platform_capabilities=manifest["platform_capabilities"],
+        features={"support_bundle_enabled": True},
+        network_policy=manifest["network_policy"],
+        transport_policy={
             "preferred_order": ["https"],
             "connect_timeout_ms": 2500,
             "retry_budget": 3,
             "probe_timeout_ms": 1000,
         },
-        "endpoints": compile_logical_server_variants(logical_server),
-    }
+        logical_servers=[logical_server],
+    )
     provider_profile_manifest["signature"] = sign_payload(
         private_pem,
         canonical_manifest_bytes(provider_profile_manifest),

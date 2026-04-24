@@ -148,6 +148,11 @@ class SignedManifestLoaderTests(unittest.TestCase):
             manifest = signed_manifest(private_pem)
             manifest["features"]["profile_kind"] = "provider-profile"
             manifest["provider_profile_schema_version"] = 1
+            manifest["endpoints"][0]["metadata"] = {
+                "logical_server": "edge",
+                "supported_client_platforms": ["linux"],
+                "provider_profile_schema_version": 1,
+            }
             manifest["signature"] = sign_payload(private_pem, canonical_manifest_bytes(manifest))
 
             loaded = loader.load_dict(manifest)
@@ -165,6 +170,11 @@ class SignedManifestLoaderTests(unittest.TestCase):
             manifest = signed_manifest(private_pem)
             manifest["features"]["profile_kind"] = "provider-profile"
             manifest.pop("provider_profile_schema_version", None)
+            manifest["endpoints"][0]["metadata"] = {
+                "logical_server": "edge",
+                "supported_client_platforms": ["linux"],
+                "provider_profile_schema_version": 1,
+            }
             manifest["signature"] = sign_payload(private_pem, canonical_manifest_bytes(manifest))
 
             loaded = loader.load_dict(manifest)
@@ -205,6 +215,29 @@ class SignedManifestLoaderTests(unittest.TestCase):
                 loader.load_dict(manifest)
 
             self.assertIn("profile_kind='provider-profile'", str(ctx.exception))
+
+    def test_loader_rejects_provider_profile_endpoint_schema_mismatch(self) -> None:
+        private_pem, public_pem = generate_keypair()
+        verifier = Ed25519Verifier.from_public_key_pem(public_pem)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            store = ManifestStore(Path(tmp) / "cache")
+            loader = SignedManifestLoader(verifier=verifier, store=store)
+
+            manifest = signed_manifest(private_pem)
+            manifest["features"]["profile_kind"] = "provider-profile"
+            manifest["provider_profile_schema_version"] = 1
+            manifest["endpoints"][0]["metadata"] = {
+                "logical_server": "spb-main",
+                "supported_client_platforms": ["linux"],
+                "provider_profile_schema_version": 2,
+            }
+            manifest["signature"] = sign_payload(private_pem, canonical_manifest_bytes(manifest))
+
+            with self.assertRaises(Exception) as ctx:
+                loader.load_dict(manifest)
+
+            self.assertIn("expected '1'", str(ctx.exception))
 
     def test_loader_accepts_valid_incident_guidance_overrides(self) -> None:
         private_pem, public_pem = generate_keypair()

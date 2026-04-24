@@ -97,6 +97,7 @@ def validate_manifest(manifest: Manifest) -> None:
             validate_incident_guidance_overrides(overrides)
         except ValueError as exc:
             raise ManifestError(str(exc)) from exc
+    _validate_provider_profile_contract(manifest)
     for endpoint in manifest.endpoints:
         _validate_endpoint_platform_targeting(endpoint)
         if endpoint_declares_xray(endpoint):
@@ -141,6 +142,25 @@ def _validate_manifest_schema_version(manifest: Manifest) -> None:
             )
     elif manifest.provider_profile_schema_version is not None:
         raise ManifestError("provider_profile_schema_version requires features.profile_kind='provider-profile'")
+
+
+def _validate_provider_profile_contract(manifest: Manifest) -> None:
+    if manifest.features.get("profile_kind") != "provider-profile":
+        return
+
+    provider_schema_version = manifest.provider_profile_schema_version or PROVIDER_PROFILE_SCHEMA_VERSION
+    for endpoint in manifest.endpoints:
+        logical_server = endpoint.metadata.get("logical_server")
+        if not isinstance(logical_server, str) or not logical_server:
+            raise ManifestError(
+                f"provider-profile endpoint '{endpoint.id}' is missing logical_server metadata"
+            )
+        endpoint_schema_version = endpoint.metadata.get("provider_profile_schema_version", provider_schema_version)
+        if endpoint_schema_version != provider_schema_version:
+            raise ManifestError(
+                f"provider-profile endpoint '{endpoint.id}' has provider_profile_schema_version "
+                f"'{endpoint_schema_version}', expected '{provider_schema_version}'"
+            )
 
 
 def _validate_endpoint_platform_targeting(endpoint: Endpoint) -> None:

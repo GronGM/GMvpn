@@ -125,7 +125,8 @@
         "xray_server_name": "edge-spb.example.net",
         "xray_ws_path": "/desktop",
         "xray_ws_host": "edge-spb.example.net",
-        "logical_server": "spb-main"
+        "logical_server": "spb-main",
+        "provider_profile_schema_version": 1
       }
     },
     {
@@ -153,7 +154,8 @@
         "xray_ws_path": "/ios",
         "xray_ws_host": "edge-spb.example.net",
         "ios_provider_kind": "packet-tunnel",
-        "logical_server": "spb-main"
+        "logical_server": "spb-main",
+        "provider_profile_schema_version": 1
       }
     },
     {
@@ -190,9 +192,10 @@
         "xray_server_name": "edge-spb-alt.example.net",
         "xray_ws_path": "/android-alt",
         "xray_ws_host": "edge-spb-alt.example.net",
-        "logical_server": "spb-main"
+        "logical_server": "spb-main",
+        "provider_profile_schema_version": 1
       }
     }
   ],
-  "signature": "u78ISGDUrIIj3rjjTzE0fZEKfT8SFBoJaAZwKNbR6AWIbpJF0/6SN2vpEHs3AGoq9KmmmRgVq9cNz0Ikm6LjCA=="
+  "signature": "ru617Nt2+7eKTqO3l+OXDsM026Fim5eVTzKsKiiarCPdPYaXQR1DZZnX7CQXe/kBQcetlPqaCvjQXJ+9vW5ZCw=="
 }
