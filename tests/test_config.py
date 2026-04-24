@@ -104,6 +104,51 @@ class SignedManifestLoaderTests(unittest.TestCase):
             with self.assertRaises(Exception):
                 loader.load_dict(expired)
 
+    def test_loader_rejects_generated_at_not_earlier_than_expires_at(self) -> None:
+        private_pem, public_pem = generate_keypair()
+        verifier = Ed25519Verifier.from_public_key_pem(public_pem)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            store = ManifestStore(Path(tmp) / "cache")
+            loader = SignedManifestLoader(verifier=verifier, store=store)
+
+            manifest = signed_manifest(private_pem)
+            manifest["generated_at"] = "2026-04-30T00:00:00Z"
+            manifest["expires_at"] = "2026-04-30T00:00:00Z"
+            manifest["signature"] = sign_payload(private_pem, canonical_manifest_bytes(manifest))
+
+            with self.assertRaises(Exception) as ctx:
+                loader.load_dict(manifest)
+
+            self.assertIn("generated_at must be earlier than expires_at", str(ctx.exception))
+
+    def test_loader_rejects_duplicate_endpoint_ids(self) -> None:
+        private_pem, public_pem = generate_keypair()
+        verifier = Ed25519Verifier.from_public_key_pem(public_pem)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            store = ManifestStore(Path(tmp) / "cache")
+            loader = SignedManifestLoader(verifier=verifier, store=store)
+
+            manifest = signed_manifest(private_pem)
+            manifest["endpoints"].append(
+                {
+                    "id": "edge-1",
+                    "host": "203.0.113.11",
+                    "port": 443,
+                    "transport": "https",
+                    "region": "eu-central",
+                    "tags": [],
+                    "metadata": {},
+                }
+            )
+            manifest["signature"] = sign_payload(private_pem, canonical_manifest_bytes(manifest))
+
+            with self.assertRaises(Exception) as ctx:
+                loader.load_dict(manifest)
+
+            self.assertIn("duplicate endpoint id 'edge-1'", str(ctx.exception))
+
     def test_loader_accepts_missing_schema_version_as_current_default(self) -> None:
         private_pem, public_pem = generate_keypair()
         verifier = Ed25519Verifier.from_public_key_pem(public_pem)

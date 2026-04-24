@@ -98,6 +98,38 @@ class ProviderCompilerTests(unittest.TestCase):
                 ],
             )
 
+    def test_build_provider_profile_manifest_rejects_duplicate_logical_server(self) -> None:
+        with self.assertRaises(ProviderCompileError) as ctx:
+            build_provider_profile_manifest(
+                version=1,
+                schema_version=1,
+                provider_profile_schema_version=1,
+                generated_at="2026-04-23T00:00:00Z",
+                expires_at="2026-04-30T00:00:00Z",
+                platform_capabilities={},
+                features={},
+                network_policy={},
+                transport_policy={"preferred_order": ["https"]},
+                logical_servers=[
+                    {
+                        "logical_server": "spb-main",
+                        "host": "198.51.100.40",
+                        "port": 443,
+                        "region": "ru-spb",
+                        "variants": [{"name": "desktop", "metadata": {"supported_client_platforms": ["linux"]}}],
+                    },
+                    {
+                        "logical_server": "spb-main",
+                        "host": "198.51.100.41",
+                        "port": 443,
+                        "region": "ru-mow",
+                        "variants": [{"name": "mobile", "metadata": {"supported_client_platforms": ["android"]}}],
+                    },
+                ],
+            )
+
+        self.assertIn("duplicate logical_server 'spb-main'", str(ctx.exception))
+
     def test_validate_compiled_variants_rejects_duplicate_ids(self) -> None:
         endpoints = [
             {

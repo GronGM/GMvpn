@@ -102,8 +102,13 @@ def validate_manifest(manifest: Manifest) -> None:
     _validate_manifest_schema_version(manifest)
     if not manifest.endpoints:
         raise ManifestError("manifest must contain at least one endpoint")
-    if _parse_utc_timestamp(manifest.expires_at) <= datetime.now(timezone.utc):
+    generated_at = _parse_utc_timestamp(manifest.generated_at)
+    expires_at = _parse_utc_timestamp(manifest.expires_at)
+    if generated_at >= expires_at:
+        raise ManifestError("manifest generated_at must be earlier than expires_at")
+    if expires_at <= datetime.now(timezone.utc):
         raise ManifestError("manifest is expired")
+    _validate_unique_endpoint_ids(manifest.endpoints)
     _validate_platform_capabilities(manifest.platform_capabilities)
     overrides = manifest.features.get("incident_guidance_overrides")
     if overrides is not None:
@@ -209,6 +214,14 @@ def _validate_endpoint_platform_targeting(endpoint: Endpoint) -> None:
             raise ManifestError(
                 f"endpoint '{endpoint.id}' references unsupported client platform '{item}'"
             )
+
+
+def _validate_unique_endpoint_ids(endpoints: list[Endpoint]) -> None:
+    seen_ids: set[str] = set()
+    for endpoint in endpoints:
+        if endpoint.id in seen_ids:
+            raise ManifestError(f"manifest contains duplicate endpoint id '{endpoint.id}'")
+        seen_ids.add(endpoint.id)
 
 
 def _validate_platform_capabilities(capabilities: dict[str, PlatformCapability]) -> None:
