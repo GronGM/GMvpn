@@ -15,7 +15,7 @@ from vpn_client.ios_bridge import (
     IOSBridgeDataPlane,
     build_ios_bridge_request,
 )
-from vpn_client.models import Endpoint
+from vpn_client.models import Endpoint, FailureReasonCode
 from vpn_client.process_adapter import LocalProcessAdapter
 from vpn_client.xray import XrayConfigError, XrayConfigRenderer, XrayCoreDataPlane
 
@@ -241,6 +241,40 @@ class XrayCoreDataPlaneTests(unittest.TestCase):
             self.assertEqual(record.backend, "xray-core")
             self.assertEqual(record.endpoint_id, "edge-ru-1")
             self.assertFalse(record.active)
+
+    def test_xray_dataplane_reports_missing_binary_in_real_mode(self) -> None:
+        endpoint = Endpoint(
+            id="edge-ru-1",
+            host="198.51.100.20",
+            port=443,
+            transport="https",
+            region="ru-spb",
+            metadata={
+                "xray_protocol": "vless",
+                "xray_user_id": "11111111-1111-1111-1111-111111111111",
+                "xray_stream_network": "tcp",
+                "xray_security": "tls",
+                "xray_server_name": "cdn.example.net",
+            },
+        )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            backend = XrayCoreDataPlane(
+                interface_name="tun42",
+                dry_run=False,
+                config_dir=Path(tmp),
+                binary_path="xray-missing",
+                binary_exists=lambda _name: None,
+            )
+
+            with self.assertRaises(DataPlaneError) as ctx:
+                backend.connect(endpoint)
+
+            snapshot = backend.runtime_snapshot()
+            self.assertEqual(ctx.exception.reason_code, FailureReasonCode.DATAPLANE_BINARY_MISSING)
+            self.assertFalse(snapshot["binary_available"])
+            self.assertEqual(snapshot["preflight_error"], "xray-core binary 'xray-missing' was not found in PATH")
+            self.assertIsNone(snapshot["config_path"])
 
 
 class RoutedDataPlaneTests(unittest.TestCase):

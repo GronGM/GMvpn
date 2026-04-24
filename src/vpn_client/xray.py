@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import shutil
 
 from vpn_client.backend_state import BackendStateStore, now_utc_iso
 from vpn_client.dataplane import (
@@ -200,6 +201,7 @@ class XrayCoreDataPlane(LinuxUserspaceDataPlane):
         config_dir: Path | None = None,
         binary_path: str = "xray",
         renderer: XrayConfigRenderer | None = None,
+        binary_exists=None,
     ) -> None:
         super().__init__(
             interface_name=interface_name,
@@ -211,7 +213,10 @@ class XrayCoreDataPlane(LinuxUserspaceDataPlane):
         self.config_dir.mkdir(parents=True, exist_ok=True)
         self.binary_path = binary_path
         self.renderer = renderer or XrayConfigRenderer(interface_name=interface_name)
+        self.binary_exists = binary_exists or shutil.which
         self.active_config_path: Path | None = None
+        self.preflight_error: str | None = None
+        self.binary_available: bool | None = None
 
     def connect(self, endpoint: Endpoint) -> DataPlaneSession:
         simulated = str(endpoint.metadata.get("dataplane_failure", ""))
@@ -221,6 +226,18 @@ class XrayCoreDataPlane(LinuxUserspaceDataPlane):
                 "xray-core failed to start",
                 reason_code=FailureReasonCode.DATAPLANE_BACKEND_START_FAILED,
             )
+        if not self.dry_run:
+            self.binary_available = self.binary_exists(self.binary_path) is not None
+            if not self.binary_available:
+                self.preflight_error = f"xray-core binary '{self.binary_path}' was not found in PATH"
+                raise DataPlaneError(
+                    FailureClass.ENDPOINT_DOWN,
+                    self.preflight_error,
+                    reason_code=FailureReasonCode.DATAPLANE_BINARY_MISSING,
+                )
+        else:
+            self.binary_available = None
+            self.preflight_error = None
 
         config_path = self.config_dir / f"{endpoint.id}.json"
         config_path.write_text(self.renderer.render_json(endpoint), encoding="utf-8")
@@ -231,6 +248,7 @@ class XrayCoreDataPlane(LinuxUserspaceDataPlane):
             pid = self.supervisor.start(command, dry_run=self.dry_run)
         except Exception as exc:
             self._cleanup_config()
+            self.preflight_error = None
             raise DataPlaneError(
                 FailureClass.ENDPOINT_DOWN,
                 f"xray-core start failed: {exc}",
@@ -257,6 +275,9 @@ class XrayCoreDataPlane(LinuxUserspaceDataPlane):
     def runtime_snapshot(self) -> dict:
         snapshot = super().runtime_snapshot()
         snapshot["config_path"] = str(self.active_config_path) if self.active_config_path else None
+        snapshot["binary_path"] = self.binary_path
+        snapshot["binary_available"] = self.binary_available
+        snapshot["preflight_error"] = self.preflight_error
         return snapshot
 
     def _cleanup_config(self) -> None:

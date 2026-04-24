@@ -32,6 +32,8 @@ Read these support bundle fields before changing anything:
 - `incident_summary.primary_transport_issue`
 - `endpoint_health`
 - `dataplane_runtime`
+- `dataplane_runtime.preflight_error`
+- `linux_execution`
 - `session_health_policy_resolved`
 - `transport_reenable_policy_resolved`
 - `transport_failure_policy_resolved`

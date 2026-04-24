@@ -417,6 +417,14 @@ def main() -> int:
         print("linux_reconciliation_plan:")
         for command in network_stack.last_reconciliation.commands:
             print(f"  - {' '.join(command)}")
+        if network_stack.last_reconciliation.missing_commands:
+            print(f"linux_reconciliation_missing_commands={','.join(network_stack.last_reconciliation.missing_commands)}")
+    if isinstance(network_stack, LinuxPlatformAdapter) and network_stack.last_execution:
+        print(f"linux_execution_action={network_stack.last_execution.action}")
+        if network_stack.last_execution.failure_reason_code is not None:
+            print(f"linux_execution_failure_reason={network_stack.last_execution.failure_reason_code}")
+        if network_stack.last_execution.missing_commands:
+            print(f"linux_execution_missing_commands={','.join(network_stack.last_execution.missing_commands)}")
     if report.attempts:
         print("attempts:")
         for attempt in report.attempts:
@@ -542,8 +550,22 @@ def main() -> int:
                         "dry_run": network_stack.last_reconciliation.dry_run,
                         "executed": network_stack.last_reconciliation.executed,
                         "commands": network_stack.last_reconciliation.commands,
+                        "missing_commands": network_stack.last_reconciliation.missing_commands,
                     }
                     if isinstance(network_stack, LinuxPlatformAdapter) and network_stack.last_reconciliation
+                    else None
+                ),
+                "linux_execution": (
+                    {
+                        "action": network_stack.last_execution.action,
+                        "applied_commands": network_stack.last_execution.applied_commands,
+                        "rollback_commands": network_stack.last_execution.rollback_commands,
+                        "rolled_back": network_stack.last_execution.rolled_back,
+                        "failure_reason_code": network_stack.last_execution.failure_reason_code,
+                        "failure_detail": network_stack.last_execution.failure_detail,
+                        "missing_commands": network_stack.last_execution.missing_commands,
+                    }
+                    if isinstance(network_stack, LinuxPlatformAdapter) and network_stack.last_execution
                     else None
                 ),
                 "endpoint_health": {
