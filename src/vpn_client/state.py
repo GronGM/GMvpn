@@ -5,7 +5,7 @@ from dataclasses import asdict, dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from vpn_client.models import FailureClass
+from vpn_client.models import FailureClass, FailureReasonCode, default_reason_code_for_failure
 
 
 @dataclass(slots=True)
@@ -15,6 +15,7 @@ class EndpointHealth:
     consecutive_failures: int = 0
     cooldown_until: str | None = None
     last_failure_class: str = FailureClass.NONE.value
+    last_reason_code: str = FailureReasonCode.NONE.value
     last_detail: str = ""
     updated_at: str = ""
 
@@ -27,9 +28,12 @@ class PersistentState:
     transport_crash_streaks: dict[str, int] = field(default_factory=dict)
     transport_crash_reasons: dict[str, str] = field(default_factory=dict)
     transport_soft_fail_streaks: dict[str, int] = field(default_factory=dict)
+    transport_soft_fail_buckets: dict[str, str] = field(default_factory=dict)
     transport_reenable_pending: dict[str, bool] = field(default_factory=dict)
     transport_reenable_not_before: dict[str, str] = field(default_factory=dict)
     transport_reenable_fail_streaks: dict[str, int] = field(default_factory=dict)
+    session_health_fail_streak: int = 0
+    session_health_fail_bucket: str = ""
     last_connected_endpoint_id: str | None = None
 
 
@@ -54,9 +58,12 @@ class StateStore:
             transport_crash_streaks=payload.get("transport_crash_streaks", {}),
             transport_crash_reasons=payload.get("transport_crash_reasons", {}),
             transport_soft_fail_streaks=payload.get("transport_soft_fail_streaks", {}),
+            transport_soft_fail_buckets=payload.get("transport_soft_fail_buckets", {}),
             transport_reenable_pending=payload.get("transport_reenable_pending", {}),
             transport_reenable_not_before=payload.get("transport_reenable_not_before", {}),
             transport_reenable_fail_streaks=payload.get("transport_reenable_fail_streaks", {}),
+            session_health_fail_streak=payload.get("session_health_fail_streak", 0),
+            session_health_fail_bucket=payload.get("session_health_fail_bucket", ""),
             last_connected_endpoint_id=payload.get("last_connected_endpoint_id"),
         )
 
@@ -71,9 +78,12 @@ class StateStore:
             "transport_crash_streaks": state.transport_crash_streaks,
             "transport_crash_reasons": state.transport_crash_reasons,
             "transport_soft_fail_streaks": state.transport_soft_fail_streaks,
+            "transport_soft_fail_buckets": state.transport_soft_fail_buckets,
             "transport_reenable_pending": state.transport_reenable_pending,
             "transport_reenable_not_before": state.transport_reenable_not_before,
             "transport_reenable_fail_streaks": state.transport_reenable_fail_streaks,
+            "session_health_fail_streak": state.session_health_fail_streak,
+            "session_health_fail_bucket": state.session_health_fail_bucket,
             "last_connected_endpoint_id": state.last_connected_endpoint_id,
         }
         self.path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
@@ -114,15 +124,18 @@ class StateManager:
         health.consecutive_failures = 0
         health.cooldown_until = None
         health.last_failure_class = FailureClass.NONE.value
+        health.last_reason_code = FailureReasonCode.NONE.value
         health.last_detail = "connected"
         health.updated_at = now.isoformat()
         self.state.endpoint_health[endpoint_id] = health
         self.state.last_connected_endpoint_id = endpoint_id
+        self.clear_session_health_failure(save=False)
         self.store.save(self.state)
 
     def clear_transport_crash_streak(self, transport: str) -> None:
         self.state.transport_crash_streaks[transport] = 0
         self.state.transport_soft_fail_streaks[transport] = 0
+        self.state.transport_soft_fail_buckets.pop(transport, None)
         self.state.transport_reenable_pending[transport] = False
         self.state.transport_reenable_not_before.pop(transport, None)
         self.state.transport_reenable_fail_streaks[transport] = 0
@@ -191,6 +204,27 @@ class StateManager:
         health.consecutive_failures += 1
         health.cooldown_until = (now + timedelta(seconds=self._backoff_seconds(health, failure_class))).isoformat()
         health.last_failure_class = failure_class.value
+        health.last_reason_code = default_reason_code_for_failure(failure_class).value
+        health.last_detail = detail[:160]
+        health.updated_at = now.isoformat()
+        self.state.endpoint_health[endpoint_id] = health
+        self.store.save(self.state)
+
+    def mark_failure_with_reason(
+        self,
+        endpoint_id: str,
+        failure_class: FailureClass,
+        reason_code: FailureReasonCode,
+        detail: str,
+    ) -> None:
+        now = datetime.now(timezone.utc)
+        health = self.state.endpoint_health.get(endpoint_id, EndpointHealth(endpoint_id=endpoint_id))
+        penalty = 3 if failure_class in {FailureClass.TLS_INTERFERENCE, FailureClass.DNS_INTERFERENCE} else 1
+        health.score = max(health.score - penalty, -10)
+        health.consecutive_failures += 1
+        health.cooldown_until = (now + timedelta(seconds=self._backoff_seconds(health, failure_class))).isoformat()
+        health.last_failure_class = failure_class.value
+        health.last_reason_code = reason_code.value
         health.last_detail = detail[:160]
         health.updated_at = now.isoformat()
         self.state.endpoint_health[endpoint_id] = health
@@ -254,9 +288,20 @@ class StateManager:
     def transport_crash_reason(self, transport: str) -> str | None:
         return self.state.transport_crash_reasons.get(transport)
 
-    def record_transport_soft_failure(self, transport: str, threshold: int = 3, disable_ttl_seconds: int = 300) -> bool:
+    def record_transport_soft_failure(
+        self,
+        transport: str,
+        failure_class: FailureClass = FailureClass.UNKNOWN,
+        reason_code: FailureReasonCode = FailureReasonCode.UNKNOWN,
+        threshold: int = 3,
+        disable_ttl_seconds: int = 300,
+    ) -> bool:
+        bucket = f"{failure_class.value}:{reason_code.value}"
         streak = self.state.transport_soft_fail_streaks.get(transport, 0) + 1
+        if self.state.transport_soft_fail_buckets.get(transport) != bucket:
+            streak = 1
         self.state.transport_soft_fail_streaks[transport] = streak
+        self.state.transport_soft_fail_buckets[transport] = bucket
         disabled = streak >= threshold
         if disabled:
             self.state.incident_flags[f"disable_transport_{transport}"] = True
@@ -268,6 +313,34 @@ class StateManager:
 
     def transport_soft_fail_streak(self, transport: str) -> int:
         return self.state.transport_soft_fail_streaks.get(transport, 0)
+
+    def clear_transport_soft_failures(self, transport: str) -> None:
+        self.state.transport_soft_fail_streaks[transport] = 0
+        self.state.transport_soft_fail_buckets.pop(transport, None)
+        self.store.save(self.state)
+
+    def record_session_health_failure(
+        self,
+        failure_class: FailureClass,
+        reason_code: FailureReasonCode,
+        threshold: int = 3,
+    ) -> bool:
+        bucket = f"{failure_class.value}:{reason_code.value}"
+        streak = self.state.session_health_fail_streak + 1
+        if self.state.session_health_fail_bucket != bucket:
+            streak = 1
+        self.state.session_health_fail_streak = streak
+        self.state.session_health_fail_bucket = bucket
+        self.store.save(self.state)
+        return streak >= threshold
+
+    def clear_session_health_failure(self, save: bool = True) -> bool:
+        had_failure = self.state.session_health_fail_streak > 0 or bool(self.state.session_health_fail_bucket)
+        self.state.session_health_fail_streak = 0
+        self.state.session_health_fail_bucket = ""
+        if save:
+            self.store.save(self.state)
+        return had_failure
 
     def _backoff_seconds(self, health: EndpointHealth, failure_class: FailureClass) -> int:
         base_seconds = 30 if failure_class in {FailureClass.TLS_INTERFERENCE, FailureClass.DNS_INTERFERENCE} else 10

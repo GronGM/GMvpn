@@ -168,6 +168,14 @@ The first honest MVP should mean:
 
 This is enough to call the project "a real client foundation with a releasable control plane", but not yet "full cross-platform parity".
 
+For the first honest MVP release contour, we now narrow that further to:
+
+- `client-platform=linux`
+- linux platform adapter
+- `dataplane=xray-core`
+
+This keeps the release target concrete and prevents the repository from implying production parity across placeholder or bridge-only paths.
+
 ## Platform Target Matrix
 
 ### Linux

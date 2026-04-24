@@ -15,6 +15,7 @@ from vpn_client.policy import PolicyEngine, validate_incident_guidance_overrides
 from vpn_client.probe import ProbeEngine
 from vpn_client.recovery import StartupRecovery
 from vpn_client.runtime import RuntimeState
+from vpn_client.runtime_support import assess_runtime_support
 from vpn_client.runtime_tick import RuntimeTickPolicy
 from vpn_client.security import Ed25519Verifier
 from vpn_client.session import SessionOrchestrator
@@ -143,13 +144,14 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--health-checks",
         type=int,
-        default=0,
-        help="Run N post-connect health checks before exit",
+        default=None,
+        help="Override post-connect health checks before exit",
     )
     parser.add_argument(
         "--auto-reconnect-on-health-failure",
-        action="store_true",
-        help="Reconnect automatically if a post-connect health check fails",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="Override whether to reconnect automatically if a post-connect health check fails",
     )
     parser.add_argument(
         "--backend-state-file",
@@ -256,6 +258,11 @@ def main() -> int:
             )
     recovery = StartupRecovery(runtime_state, network_stack, dataplane, telemetry, state_manager=state_manager)
     recovery_report = recovery.recover(cleanup_stale_runtime=recovery_cleanup_enabled)
+    runtime_support = assess_runtime_support(
+        client_platform=client_platform,
+        dataplane_name=args.dataplane,
+        platform_adapter_name=getattr(network_stack, "platform_name", args.platform),
+    )
     orchestrator = SessionOrchestrator(
         transports=default_transport_registry(),
         probe_engine=ProbeEngine(),
@@ -274,11 +281,24 @@ def main() -> int:
     report = orchestrator.connect(manifest)
     if args.reconnect_once and report.state is SessionState.CONNECTED:
         report = orchestrator.reconnect(manifest)
-    if args.health_checks > 0 and report.state is SessionState.CONNECTED:
+    effective_session_health_policy = orchestrator.policy_engine.resolve_session_health_policy(
+        manifest,
+        client_platform=client_platform,
+        transport=report.selected_transport,
+    )
+    effective_health_checks = (
+        args.health_checks if args.health_checks is not None else effective_session_health_policy.checks
+    )
+    effective_auto_reconnect = (
+        args.auto_reconnect_on_health_failure
+        if args.auto_reconnect_on_health_failure is not None
+        else effective_session_health_policy.auto_reconnect
+    )
+    if effective_health_checks > 0 and report.state is SessionState.CONNECTED:
         monitored = orchestrator.monitor_connection(
             manifest,
-            checks=args.health_checks,
-            auto_reconnect=args.auto_reconnect_on_health_failure,
+            checks=effective_health_checks,
+            auto_reconnect=effective_auto_reconnect,
         )
         if monitored is not None:
             report = monitored
@@ -339,6 +359,13 @@ def main() -> int:
         print(f"transport={report.selected_transport}")
     if report.applied_tunnel_mode:
         print(f"tunnel_mode={report.applied_tunnel_mode}")
+    print(f"session_health_checks={effective_health_checks}")
+    print(f"session_health_auto_reconnect={effective_auto_reconnect}")
+    print(f"runtime_support_tier={runtime_support.tier}")
+    print(f"runtime_support_summary={runtime_support.summary}")
+    print(f"runtime_support_in_mvp_scope={runtime_support.in_mvp_scope}")
+    if runtime_support.caveats:
+        print(f"runtime_support_caveats={' | '.join(runtime_support.caveats)}")
     print(f"kill_switch_active={report.kill_switch_active}")
     print(f"startup_recovered={recovery_report.stale_marker_found and recovery_cleanup_enabled}")
     if local_incident_guidance_source is not None:
@@ -411,6 +438,21 @@ def main() -> int:
                 "selected_transport": report.selected_transport,
                 "runtime_marker_present": runtime_state.load_marker() is not None,
                 "last_connected_endpoint_id": state_manager.state.last_connected_endpoint_id,
+                "session_health_checks": effective_health_checks,
+                "session_health_auto_reconnect": effective_auto_reconnect,
+                "runtime_support": {
+                    "tier": runtime_support.tier,
+                    "summary": runtime_support.summary,
+                    "in_mvp_scope": runtime_support.in_mvp_scope,
+                    "caveats": runtime_support.caveats,
+                    "client_platform": client_platform.value,
+                    "dataplane": args.dataplane,
+                    "platform_adapter": getattr(network_stack, "platform_name", args.platform),
+                },
+                "session_health_policy_resolved": {
+                    "checks": effective_health_checks,
+                    "auto_reconnect": effective_auto_reconnect,
+                },
                 "incident_flags": state_manager.state.incident_flags,
                 "incident_flag_expires_at": state_manager.state.incident_flag_expires_at,
                 "transport_recovery": {
@@ -418,6 +460,7 @@ def main() -> int:
                         "crash_streak": state_manager.state.transport_crash_streaks.get(transport, 0),
                         "crash_reason": state_manager.state.transport_crash_reasons.get(transport),
                         "soft_fail_streak": state_manager.state.transport_soft_fail_streaks.get(transport, 0),
+                        "soft_fail_bucket": state_manager.state.transport_soft_fail_buckets.get(transport),
                         "disable_flag_active": bool(state_manager.state.incident_flags.get(f"disable_transport_{transport}", False)),
                         "disable_flag_expires_at": state_manager.state.incident_flag_expires_at.get(f"disable_transport_{transport}"),
                         "reenable_pending": bool(state_manager.state.transport_reenable_pending.get(transport, False)),
@@ -429,6 +472,7 @@ def main() -> int:
                             *state_manager.state.transport_crash_streaks.keys(),
                             *state_manager.state.transport_crash_reasons.keys(),
                             *state_manager.state.transport_soft_fail_streaks.keys(),
+                            *state_manager.state.transport_soft_fail_buckets.keys(),
                             *state_manager.state.transport_reenable_pending.keys(),
                             *state_manager.state.transport_reenable_not_before.keys(),
                             *state_manager.state.transport_reenable_fail_streaks.keys(),
@@ -438,9 +482,12 @@ def main() -> int:
                 "transport_crash_streaks": state_manager.state.transport_crash_streaks,
                 "transport_crash_reasons": state_manager.state.transport_crash_reasons,
                 "transport_soft_fail_streaks": state_manager.state.transport_soft_fail_streaks,
+                "transport_soft_fail_buckets": state_manager.state.transport_soft_fail_buckets,
                 "transport_reenable_pending": state_manager.state.transport_reenable_pending,
                 "transport_reenable_not_before": state_manager.state.transport_reenable_not_before,
                 "transport_reenable_fail_streaks": state_manager.state.transport_reenable_fail_streaks,
+                "session_health_fail_streak": state_manager.state.session_health_fail_streak,
+                "session_health_fail_bucket": state_manager.state.session_health_fail_bucket,
                 "reenabled_transports": reenabled_transports,
                 "runtime_tick_reports": runtime_tick_reports,
                 "supervisor_cycles": supervisor_cycles,
@@ -462,6 +509,7 @@ def main() -> int:
                         "consecutive_failures": health.consecutive_failures,
                         "cooldown_until": health.cooldown_until,
                         "last_failure_class": health.last_failure_class,
+                        "last_reason_code": health.last_reason_code,
                     }
                     for endpoint_id, health in state_manager.state.endpoint_health.items()
                 },

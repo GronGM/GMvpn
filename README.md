@@ -20,8 +20,25 @@ Manifest files now also carry an explicit top-level `schema_version`.
 Provider-style manifests additionally carry `provider_profile_schema_version`.
 The loader currently supports version `1` for both contracts and will reject unsupported future versions until compatibility logic is expanded deliberately.
 Compatibility and migration rules are documented in [docs/schema-compatibility.md](/workspace/docs/schema-compatibility.md).
+Operational docs now also include [docs/release-checklist.md](/workspace/docs/release-checklist.md) and [docs/incident-playbook.md](/workspace/docs/incident-playbook.md).
 
 This is not a production VPN yet. It is the control-plane and orchestration skeleton that a production-grade client can grow on top of.
+
+## Honest MVP Target
+
+The first honest MVP runtime target is now explicit:
+
+- `client-platform=linux`
+- linux platform adapter
+- `dataplane=xray-core`
+
+This is the contour we treat as the first release-track runtime for hardening and support.
+
+Everything else should be read more conservatively:
+
+- `linux-userspace` remains a useful reference and debugging path, but it is not the first MVP release contour;
+- `windows`, `macos`, and `android` follow the same product model but still depend on placeholder-level platform adapters in this repository today;
+- `ios` remains bridge-only until a real Apple `Network Extension` runtime exists.
 
 ## Repository Layout
 
@@ -52,6 +69,12 @@ PYTHONPATH=src python -m vpn_client.cli \
 ```bash
 PYTHONPATH=src python -m unittest discover -s tests -v
 ```
+
+Pull requests and pushes to `main` are now expected to keep the CI test workflow green.
+The baseline automated gate runs:
+
+- `python -m compileall src tests`
+- `PYTHONPATH=src python -m unittest discover -s tests -v`
 
 Linux-first network planning stays in dry-run mode by default and prints the command plan it would apply.
 The data-plane backends also stay in dry-run mode by default and print the command they would launch.
@@ -110,6 +133,9 @@ Current backend policy:
 - `ios` defaults to `ios-bridge`, which currently renders a tunnel contract but still stops before a real Apple runtime starts.
 
 This keeps the architecture honest: `iOS` is now a separate contract path in the codebase, but still remains a separate engineering track until a dedicated bridge/runtime exists.
+
+The CLI now also classifies the selected runtime contour into a support tier and exports that assessment in the support bundle.
+For the current repository state, only the explicit `linux + xray-core + linux adapter` contour is considered `mvp-supported`.
 
 ## Platform Adapters
 
@@ -191,6 +217,85 @@ This seeds a stale runtime marker for `ru-spb-https-1`, forces startup cleanup, 
 - `startup_recovery.stale_marker_found`
 - `startup_recovery.actions`
 - `startup_recovery.simulated_endpoint_id`
+
+## Session Health Policy
+
+Signed manifests can now carry a bounded `features.session_health_policy` block for post-connect monitoring:
+
+```json
+{
+  "session_health_policy": {
+    "default": {
+      "checks": 1,
+      "auto_reconnect": false
+    },
+    "by_client_platform": {
+      "android": {
+        "checks": 2
+      }
+    },
+    "by_transport": {
+      "https": {
+        "auto_reconnect": true
+      }
+    }
+  }
+}
+```
+
+Rules:
+
+- `default` sets the base behavior;
+- `by_client_platform` overrides it for one client target such as `android` or `ios`;
+- `by_transport` overrides it for one transport such as `https` or `wireguard`;
+- `checks` must stay in the bounded range `0..10`;
+- `auto_reconnect` is a boolean.
+
+CLI behavior is tri-state:
+
+- if `--health-checks` is omitted, the client uses the resolved manifest value;
+- if `--auto-reconnect-on-health-failure` or `--no-auto-reconnect-on-health-failure` is omitted, the client uses the resolved manifest value;
+- if either flag is passed locally, that local value wins for the current run.
+
+The CLI prints the resolved values as `session_health_checks` and `session_health_auto_reconnect`.
+
+## Support Bundle Diagnostics
+
+The support bundle now exports the effective monitoring policy and the persistent state used to reason about repeated soft failures:
+
+- `session_health_checks`
+- `session_health_auto_reconnect`
+- `session_health_policy_resolved`
+- `session_health_fail_streak`
+- `session_health_fail_bucket`
+- `transport_soft_fail_streaks`
+- `transport_soft_fail_buckets`
+- `endpoint_health[*].last_failure_class`
+- `endpoint_health[*].last_reason_code`
+
+`transport_soft_fail_buckets` and `session_health_fail_bucket` use the format `failure_class:reason_code`.
+That means the runtime does not keep one shared streak for unrelated symptoms. A repeated `network_down:dataplane_healthcheck_failed` pattern is treated separately from `network_down:dataplane_session_inactive`.
+
+## Reason Codes
+
+Each runtime failure still carries the coarse `failure_class`, but it now also emits a machine-readable `reason_code` so support tooling can distinguish different symptoms inside the same class.
+
+Typical examples:
+
+- `dns_interference:dns_lookup_failed`
+- `tls_interference:tls_handshake_failed`
+- `udp_blocked:udp_filtered`
+- `tcp_blocked:tcp_connect_failed`
+- `network_down:route_programming_failed`
+- `network_down:dataplane_healthcheck_failed`
+- `network_down:dataplane_backend_crashed`
+- `unknown:transport_not_registered`
+
+Operationally, this means:
+
+- a one-off soft health failure no longer degrades the session immediately when persistent state is available;
+- transient recovery clears the pending monitoring streak and emits `session_health_recovered`;
+- a dataplane crash still bypasses soft hysteresis and is escalated immediately.
 
 ## Local Guidance Overrides
 

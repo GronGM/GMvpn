@@ -5,14 +5,20 @@ from itertools import count
 
 from vpn_client.backend_state import BackendStateRecord, BackendStateStore, now_utc_iso
 from vpn_client.client_platform import ClientPlatform, backend_supported_on_platform
-from vpn_client.models import Endpoint, FailureClass
+from vpn_client.models import Endpoint, FailureClass, FailureReasonCode, default_reason_code_for_failure
 from vpn_client.process_adapter import LocalProcessAdapter
 
 
 class DataPlaneError(Exception):
-    def __init__(self, failure_class: FailureClass, detail: str):
+    def __init__(
+        self,
+        failure_class: FailureClass,
+        detail: str,
+        reason_code: FailureReasonCode | None = None,
+    ):
         super().__init__(detail)
         self.failure_class = failure_class
+        self.reason_code = reason_code or default_reason_code_for_failure(failure_class)
         self.detail = detail
 
 
@@ -104,10 +110,15 @@ class RoutedDataPlane(DataPlaneBackend):
             raise DataPlaneError(
                 FailureClass.UNKNOWN,
                 f"dataplane backend '{backend_name}' is not supported on client platform '{self.client_platform.value}'",
+                reason_code=FailureReasonCode.DATAPLANE_BACKEND_UNSUPPORTED,
             )
         backend = self.backends.get(backend_name)
         if backend is None:
-            raise DataPlaneError(FailureClass.UNKNOWN, f"dataplane backend '{backend_name}' is not registered")
+            raise DataPlaneError(
+                FailureClass.UNKNOWN,
+                f"dataplane backend '{backend_name}' is not registered",
+                reason_code=FailureReasonCode.DATAPLANE_BACKEND_UNREGISTERED,
+            )
         session = backend.connect(endpoint)
         self.active_backend_name = backend_name
         self.active_backend = backend
@@ -123,7 +134,11 @@ class RoutedDataPlane(DataPlaneBackend):
 
     def health_check(self, endpoint: Endpoint) -> None:
         if self.active_backend is None:
-            raise DataPlaneError(FailureClass.NETWORK_DOWN, "no active dataplane backend")
+            raise DataPlaneError(
+                FailureClass.NETWORK_DOWN,
+                "no active dataplane backend",
+                reason_code=FailureReasonCode.DATAPLANE_SESSION_INACTIVE,
+            )
         self.active_backend.health_check(endpoint)
 
     def runtime_snapshot(self) -> dict:
@@ -201,12 +216,17 @@ class BackendProcessSupervisor:
 
     def assert_healthy(self, pid: int | None, dry_run: bool) -> None:
         if pid is None:
-            raise DataPlaneError(FailureClass.NETWORK_DOWN, "data plane pid is missing")
+            raise DataPlaneError(
+                FailureClass.NETWORK_DOWN,
+                "data plane pid is missing",
+                reason_code=FailureReasonCode.DATAPLANE_PID_MISSING,
+            )
         if dry_run:
             if self.crashed:
                 raise DataPlaneError(
                     FailureClass.NETWORK_DOWN,
                     self.crash_reason or "data plane supervisor detected a crashed backend",
+                    reason_code=FailureReasonCode.DATAPLANE_BACKEND_CRASHED,
                 )
             return
         snapshot = self.process_adapter.snapshot(pid)
@@ -217,7 +237,11 @@ class BackendProcessSupervisor:
             self.crashed = True
             self.last_exit_code = snapshot.exit_code if snapshot is not None else self.last_exit_code
             self.crash_reason = "data plane backend is no longer running"
-            raise DataPlaneError(FailureClass.NETWORK_DOWN, self.crash_reason)
+            raise DataPlaneError(
+                FailureClass.NETWORK_DOWN,
+                self.crash_reason,
+                reason_code=FailureReasonCode.DATAPLANE_BACKEND_CRASHED,
+            )
 
     def mark_crashed(self, reason: str, exit_code: int | None = None, stdout_tail: str = "", stderr_tail: str = "") -> None:
         self.crashed = True
@@ -276,11 +300,19 @@ class LinuxUserspaceDataPlane(DataPlaneBackend):
         )
         simulated = str(endpoint.metadata.get("dataplane_failure", ""))
         if simulated == "start":
-            raise DataPlaneError(FailureClass.ENDPOINT_DOWN, "data plane backend failed to start")
+            raise DataPlaneError(
+                FailureClass.ENDPOINT_DOWN,
+                "data plane backend failed to start",
+                reason_code=FailureReasonCode.DATAPLANE_BACKEND_START_FAILED,
+            )
         try:
             pid = self.supervisor.start(command, dry_run=self.dry_run)
         except Exception as exc:
-            raise DataPlaneError(FailureClass.ENDPOINT_DOWN, f"data plane start failed: {exc}") from exc
+            raise DataPlaneError(
+                FailureClass.ENDPOINT_DOWN,
+                f"data plane start failed: {exc}",
+                reason_code=FailureReasonCode.DATAPLANE_BACKEND_START_FAILED,
+            ) from exc
         self.session = DataPlaneSession(
             backend_name=self.name,
             endpoint_id=endpoint.id,
@@ -303,12 +335,20 @@ class LinuxUserspaceDataPlane(DataPlaneBackend):
     def health_check(self, endpoint: Endpoint) -> None:
         simulated = str(endpoint.metadata.get("dataplane_failure", ""))
         if simulated == "health":
-            raise DataPlaneError(FailureClass.NETWORK_DOWN, "data plane health check failed")
+            raise DataPlaneError(
+                FailureClass.NETWORK_DOWN,
+                "data plane health check failed",
+                reason_code=FailureReasonCode.DATAPLANE_HEALTHCHECK_FAILED,
+            )
         if simulated == "crash":
             self.supervisor.mark_crashed("simulated backend crash", exit_code=137, stderr_tail="backend terminated unexpectedly")
             self._persist_state(active=False)
         if self.session is None:
-            raise DataPlaneError(FailureClass.NETWORK_DOWN, "data plane session is not active")
+            raise DataPlaneError(
+                FailureClass.NETWORK_DOWN,
+                "data plane session is not active",
+                reason_code=FailureReasonCode.DATAPLANE_SESSION_INACTIVE,
+            )
         self.supervisor.assert_healthy(self.session.pid, dry_run=self.session.dry_run)
 
     def runtime_snapshot(self) -> dict:

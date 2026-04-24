@@ -6,7 +6,7 @@ from vpn_client.client_platform import ClientPlatform
 from vpn_client.dataplane import DataPlaneBackend, DataPlaneError, NullDataPlane
 from vpn_client.health import HealthPolicy, SessionHealthMonitor
 from vpn_client.incident import build_incident_summary
-from vpn_client.models import ConnectionAttempt, FailureClass, Manifest, SessionState
+from vpn_client.models import ConnectionAttempt, FailureClass, FailureReasonCode, Manifest, SessionState
 from vpn_client.platform import NetworkStackError
 from vpn_client.platform_adapters import BasePlatformAdapter, PlatformNetworkAdapter
 from vpn_client.policy import PolicyEngine
@@ -29,6 +29,7 @@ class SessionReport:
     applied_tunnel_mode: str | None = None
     kill_switch_active: bool = False
     failure_class: FailureClass = FailureClass.NONE
+    reason_code: FailureReasonCode = FailureReasonCode.NONE
     detail: str = ""
 
 
@@ -81,6 +82,7 @@ class SessionOrchestrator:
         self.state = SessionState.PROBING
 
         last_failure = FailureClass.UNKNOWN
+        last_reason_code = FailureReasonCode.UNKNOWN
         last_detail = "no endpoints available"
         last_endpoint_id: str | None = None
         last_transport: str | None = None
@@ -116,7 +118,12 @@ class SessionOrchestrator:
                         ttl_seconds=120,
                     )
                 if self.state_manager:
-                    self.state_manager.mark_failure(endpoint.id, probe.failure_class, probe.detail)
+                    self.state_manager.mark_failure_with_reason(
+                        endpoint.id,
+                        probe.failure_class,
+                        probe.reason_code,
+                        probe.detail,
+                    )
                     mitigation_actions = self.state_manager.apply_failure_mitigation(
                         probe.failure_class,
                         transport=endpoint.transport,
@@ -125,6 +132,7 @@ class SessionOrchestrator:
                     "probe_failed",
                     self.state,
                     probe.failure_class,
+                    reason_code=probe.reason_code,
                     endpoint_id=endpoint.id,
                     transport=endpoint.transport,
                     detail=(
@@ -139,6 +147,7 @@ class SessionOrchestrator:
                         transport=endpoint.transport,
                         success=False,
                         failure_class=probe.failure_class,
+                        reason_code=probe.reason_code,
                         detail=(
                             f"{probe.detail}; mitigations={','.join(mitigation_actions)}"
                             if mitigation_actions
@@ -147,6 +156,7 @@ class SessionOrchestrator:
                     )
                 )
                 last_failure = probe.failure_class
+                last_reason_code = probe.reason_code
                 last_detail = (
                     f"{probe.detail}; mitigations={','.join(mitigation_actions)}"
                     if mitigation_actions
@@ -157,17 +167,24 @@ class SessionOrchestrator:
             transport = self.transports.get(endpoint.transport)
             if transport is None:
                 if self.state_manager:
-                    self.state_manager.mark_failure(endpoint.id, FailureClass.UNKNOWN, "transport is not registered")
+                    self.state_manager.mark_failure_with_reason(
+                        endpoint.id,
+                        FailureClass.UNKNOWN,
+                        FailureReasonCode.TRANSPORT_NOT_REGISTERED,
+                        "transport is not registered",
+                    )
                 attempts.append(
                     ConnectionAttempt(
                         endpoint_id=endpoint.id,
                         transport=endpoint.transport,
                         success=False,
                         failure_class=FailureClass.UNKNOWN,
+                        reason_code=FailureReasonCode.TRANSPORT_NOT_REGISTERED,
                         detail=f"transport '{endpoint.transport}' is not registered",
                     )
                 )
                 last_failure = FailureClass.UNKNOWN
+                last_reason_code = FailureReasonCode.TRANSPORT_NOT_REGISTERED
                 last_detail = "transport is not registered"
                 continue
 
@@ -179,7 +196,11 @@ class SessionOrchestrator:
                 self.dataplane.connect(endpoint)
                 health_report = self.health_monitor.check(endpoint)
                 if not health_report.healthy:
-                    raise DataPlaneError(health_report.failure_class, health_report.detail)
+                    raise DataPlaneError(
+                        health_report.failure_class,
+                        health_report.detail,
+                        reason_code=health_report.reason_code,
+                    )
                 self.state = SessionState.CONNECTED
                 self.last_known_good_endpoint_id = endpoint.id
                 self.telemetry.record(
@@ -195,6 +216,7 @@ class SessionOrchestrator:
                         transport=endpoint.transport,
                         success=True,
                         failure_class=FailureClass.NONE,
+                        reason_code=FailureReasonCode.NONE,
                         detail="connected",
                     )
                 )
@@ -216,7 +238,12 @@ class SessionOrchestrator:
                 )
             except TransportError as exc:
                 if self.state_manager:
-                    self.state_manager.mark_failure(endpoint.id, exc.failure_class, exc.detail)
+                    self.state_manager.mark_failure_with_reason(
+                        endpoint.id,
+                        exc.failure_class,
+                        exc.reason_code,
+                        exc.detail,
+                    )
                     if scheduled.pending_reenable:
                         self.state_manager.mark_transport_reenable_pending(endpoint.transport, False)
                         self.state_manager.set_incident_flag_with_ttl(
@@ -228,6 +255,7 @@ class SessionOrchestrator:
                     "connect_failed",
                     self.state,
                     exc.failure_class,
+                    reason_code=exc.reason_code,
                     endpoint_id=endpoint.id,
                     transport=endpoint.transport,
                     detail=exc.detail,
@@ -238,17 +266,24 @@ class SessionOrchestrator:
                         transport=endpoint.transport,
                         success=False,
                         failure_class=exc.failure_class,
+                        reason_code=exc.reason_code,
                         detail=exc.detail,
                     )
                 )
                 last_failure = exc.failure_class
+                last_reason_code = exc.reason_code
                 last_detail = exc.detail
             except DataPlaneError as exc:
                 disabled_transport = False
                 runtime_snapshot = self.dataplane.runtime_snapshot()
                 self._cleanup_after_failed_attempt(transport, disconnect_network_stack=True)
                 if self.state_manager:
-                    self.state_manager.mark_failure(endpoint.id, exc.failure_class, exc.detail)
+                    self.state_manager.mark_failure_with_reason(
+                        endpoint.id,
+                        exc.failure_class,
+                        exc.reason_code,
+                        exc.detail,
+                    )
                     if runtime_snapshot.get("crashed"):
                         disabled_transport = self.state_manager.record_transport_crash(
                             endpoint.transport,
@@ -258,6 +293,8 @@ class SessionOrchestrator:
                     else:
                         disabled_transport = self.state_manager.record_transport_soft_failure(
                             endpoint.transport,
+                            exc.failure_class,
+                            exc.reason_code,
                             threshold=3,
                         )
                     if scheduled.pending_reenable and not disabled_transport:
@@ -271,6 +308,7 @@ class SessionOrchestrator:
                     "dataplane_failed",
                     self.state,
                     exc.failure_class,
+                    reason_code=exc.reason_code,
                     endpoint_id=endpoint.id,
                     transport=endpoint.transport,
                     detail=(
@@ -285,6 +323,7 @@ class SessionOrchestrator:
                         transport=endpoint.transport,
                         success=False,
                         failure_class=exc.failure_class,
+                        reason_code=exc.reason_code,
                         detail=(
                             f"{exc.detail}; transport disabled locally"
                             if disabled_transport
@@ -293,6 +332,7 @@ class SessionOrchestrator:
                     )
                 )
                 last_failure = exc.failure_class
+                last_reason_code = exc.reason_code
                 last_detail = (
                     f"{exc.detail}; transport disabled locally"
                     if disabled_transport
@@ -301,7 +341,12 @@ class SessionOrchestrator:
             except NetworkStackError as exc:
                 self._cleanup_after_failed_attempt(transport, disconnect_network_stack=False)
                 if self.state_manager:
-                    self.state_manager.mark_failure(endpoint.id, exc.failure_class, exc.detail)
+                    self.state_manager.mark_failure_with_reason(
+                        endpoint.id,
+                        exc.failure_class,
+                        exc.reason_code,
+                        exc.detail,
+                    )
                     if scheduled.pending_reenable:
                         self.state_manager.mark_transport_reenable_pending(endpoint.transport, False)
                         self.state_manager.set_incident_flag_with_ttl(
@@ -313,6 +358,7 @@ class SessionOrchestrator:
                     "network_policy_failed",
                     self.state,
                     exc.failure_class,
+                    reason_code=exc.reason_code,
                     endpoint_id=endpoint.id,
                     transport=endpoint.transport,
                     detail=exc.detail,
@@ -323,10 +369,12 @@ class SessionOrchestrator:
                         transport=endpoint.transport,
                         success=False,
                         failure_class=exc.failure_class,
+                        reason_code=exc.reason_code,
                         detail=exc.detail,
                     )
                 )
                 last_failure = exc.failure_class
+                last_reason_code = exc.reason_code
                 last_detail = exc.detail
 
         self.state = SessionState.DEGRADED if attempts else SessionState.FAILED
@@ -334,6 +382,7 @@ class SessionOrchestrator:
             "session_degraded",
             self.state,
             last_failure,
+            reason_code=last_reason_code,
             endpoint_id=last_endpoint_id,
             transport=last_transport,
             detail=last_detail,
@@ -345,6 +394,7 @@ class SessionOrchestrator:
             selected_transport=last_transport,
             kill_switch_active=self.network_stack.kill_switch_active,
             failure_class=last_failure,
+            reason_code=last_reason_code,
             detail=last_detail,
         )
 
@@ -459,6 +509,7 @@ class SessionOrchestrator:
             "incident_summary",
             report.state,
             FailureClass(incident_summary["failure_class"]),
+            reason_code=report.reason_code,
             endpoint_id=report.selected_endpoint_id,
             transport=report.selected_transport,
             detail=(
@@ -471,6 +522,7 @@ class SessionOrchestrator:
         self,
         endpoint,
         failure_class: FailureClass,
+        reason_code: FailureReasonCode,
         detail: str,
     ) -> SessionReport:
         applied_state = self.network_stack.applied_state
@@ -483,6 +535,7 @@ class SessionOrchestrator:
             "session_degraded",
             self.state,
             failure_class,
+            reason_code=reason_code,
             endpoint_id=endpoint.id,
             transport=endpoint.transport,
             detail=detail,
@@ -494,6 +547,7 @@ class SessionOrchestrator:
             applied_tunnel_mode=applied_tunnel_mode,
             kill_switch_active=self.network_stack.kill_switch_active,
             failure_class=failure_class,
+            reason_code=reason_code,
             detail=detail,
         )
 
@@ -511,26 +565,28 @@ class SessionOrchestrator:
             HealthPolicy(checks=checks, auto_reconnect=auto_reconnect),
         )
         for report in reports:
-            if not report.healthy:
+            if report.healthy:
+                had_pending_failure = False
                 if self.state_manager:
-                    self.state_manager.mark_failure(endpoint.id, report.failure_class, report.detail)
-                    runtime_snapshot = self.dataplane.runtime_snapshot()
-                    if runtime_snapshot.get("crashed"):
-                        self.state_manager.record_transport_crash(
-                            endpoint.transport,
-                            runtime_snapshot.get("crash_reason") or report.detail,
-                            threshold=1,
-                        )
-                    else:
-                        self.state_manager.record_transport_soft_failure(
-                            endpoint.transport,
-                            threshold=3,
-                        )
+                    had_pending_failure = self.state_manager.clear_session_health_failure()
+                    self.state_manager.clear_transport_soft_failures(endpoint.transport)
+                if had_pending_failure:
+                    self.telemetry.record(
+                        "session_health_recovered",
+                        SessionState.CONNECTED,
+                        endpoint_id=endpoint.id,
+                        transport=endpoint.transport,
+                        detail="transient health failure recovered before degradation threshold",
+                    )
+                continue
+
+            if self.state_manager is None:
                 if auto_reconnect:
                     self.telemetry.record(
                         "session_auto_reconnect",
                         SessionState.CONNECTED,
                         report.failure_class,
+                        reason_code=report.reason_code,
                         endpoint_id=endpoint.id,
                         transport=endpoint.transport,
                         detail=report.detail,
@@ -539,8 +595,74 @@ class SessionOrchestrator:
                 return self._degrade_current_session(
                     endpoint,
                     report.failure_class,
+                    report.reason_code,
                     report.detail,
                 )
+
+            confirmed_failure = False
+            disabled_transport = False
+            runtime_snapshot = self.dataplane.runtime_snapshot()
+            self.state_manager.mark_failure_with_reason(
+                endpoint.id,
+                report.failure_class,
+                report.reason_code,
+                report.detail,
+            )
+            if runtime_snapshot.get("crashed"):
+                self.state_manager.clear_session_health_failure()
+                disabled_transport = self.state_manager.record_transport_crash(
+                    endpoint.transport,
+                    runtime_snapshot.get("crash_reason") or report.detail,
+                    threshold=1,
+                )
+                confirmed_failure = True
+            else:
+                disabled_transport = self.state_manager.record_transport_soft_failure(
+                    endpoint.transport,
+                    report.failure_class,
+                    report.reason_code,
+                    threshold=3,
+                )
+                confirmed_failure = self.state_manager.record_session_health_failure(
+                    report.failure_class,
+                    report.reason_code,
+                    threshold=3,
+                )
+
+            failure_detail = report.detail
+            if disabled_transport:
+                failure_detail = f"{failure_detail}; transport disabled locally"
+
+            if not confirmed_failure:
+                pending_streak = self.state_manager.state.session_health_fail_streak if self.state_manager else 1
+                self.telemetry.record(
+                    "session_health_suppressed",
+                    SessionState.CONNECTED,
+                    report.failure_class,
+                    reason_code=report.reason_code,
+                    endpoint_id=endpoint.id,
+                    transport=endpoint.transport,
+                    detail=f"{failure_detail}; streak={pending_streak}/3",
+                )
+                continue
+
+            if auto_reconnect:
+                self.telemetry.record(
+                    "session_auto_reconnect",
+                    SessionState.CONNECTED,
+                    report.failure_class,
+                    reason_code=report.reason_code,
+                    endpoint_id=endpoint.id,
+                    transport=endpoint.transport,
+                    detail=failure_detail,
+                )
+                return self.reconnect(manifest)
+            return self._degrade_current_session(
+                endpoint,
+                report.failure_class,
+                report.reason_code,
+                failure_detail,
+            )
         return SessionReport(
             state=self.state,
             selected_endpoint_id=endpoint.id,

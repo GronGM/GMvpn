@@ -3,6 +3,7 @@ from __future__ import annotations
 import unittest
 
 from vpn_client.models import DnsMode, FailureClass, Manifest, NetworkPolicy, TransportPolicy, TunnelMode
+from vpn_client.client_platform import ClientPlatform
 from vpn_client.policy import PolicyEngine
 from vpn_client.state import StateManager, StateStore
 
@@ -127,6 +128,36 @@ class PolicyEngineTests(unittest.TestCase):
 
         self.assertEqual(guidance.severity, "critical")
         self.assertEqual(guidance.recommended_action, "Local operator guidance.")
+
+    def test_policy_engine_resolves_session_health_policy_by_platform_and_transport(self) -> None:
+        manifest = Manifest(
+            version=1,
+            generated_at="2026-04-23T00:00:00Z",
+            expires_at="2026-04-30T00:00:00Z",
+            endpoints=[],
+            transport_policy=TransportPolicy(preferred_order=["https"]),
+            network_policy=NetworkPolicy(),
+            features={
+                "session_health_policy": {
+                    "default": {"checks": 1, "auto_reconnect": False},
+                    "by_client_platform": {
+                        "android": {"checks": 2},
+                    },
+                    "by_transport": {
+                        "https": {"auto_reconnect": True},
+                    },
+                }
+            },
+        )
+
+        resolved = PolicyEngine().resolve_session_health_policy(
+            manifest,
+            client_platform=ClientPlatform.ANDROID,
+            transport="https",
+        )
+
+        self.assertEqual(resolved.checks, 2)
+        self.assertTrue(resolved.auto_reconnect)
 
 
 if __name__ == "__main__":

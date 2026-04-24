@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from vpn_client.models import Endpoint, FailureClass, ProbeResult
+from vpn_client.models import Endpoint, FailureClass, FailureReasonCode, ProbeResult
 
 
 class ProbeEngine:
@@ -18,6 +18,7 @@ class ProbeEngine:
                 endpoint_id=endpoint.id,
                 reachable=False,
                 failure_class=FailureClass.DNS_INTERFERENCE,
+                reason_code=FailureReasonCode.DNS_LOOKUP_FAILED,
                 detail="bootstrap hostname does not resolve consistently",
             )
         if simulated == "tls":
@@ -25,6 +26,7 @@ class ProbeEngine:
                 endpoint_id=endpoint.id,
                 reachable=False,
                 failure_class=FailureClass.TLS_INTERFERENCE,
+                reason_code=FailureReasonCode.TLS_HANDSHAKE_FAILED,
                 detail="connection times out during TLS handshake",
             )
         if simulated == "udp":
@@ -32,6 +34,7 @@ class ProbeEngine:
                 endpoint_id=endpoint.id,
                 reachable=False,
                 failure_class=FailureClass.UDP_BLOCKED,
+                reason_code=FailureReasonCode.UDP_FILTERED,
                 detail="UDP path appears blocked or filtered",
             )
         if simulated == "tcp":
@@ -39,6 +42,7 @@ class ProbeEngine:
                 endpoint_id=endpoint.id,
                 reachable=False,
                 failure_class=FailureClass.TCP_BLOCKED,
+                reason_code=FailureReasonCode.TCP_CONNECT_FAILED,
                 detail="TCP connect fails repeatedly",
             )
         if simulated == "down":
@@ -46,6 +50,7 @@ class ProbeEngine:
                 endpoint_id=endpoint.id,
                 reachable=False,
                 failure_class=FailureClass.ENDPOINT_DOWN,
+                reason_code=FailureReasonCode.ENDPOINT_UNREACHABLE,
                 detail="endpoint is not answering health probes",
             )
 
