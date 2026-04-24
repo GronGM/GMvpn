@@ -4,7 +4,7 @@ import unittest
 
 from vpn_client.models import DnsMode, FailureClass, Manifest, NetworkPolicy, TransportPolicy, TunnelMode
 from vpn_client.client_platform import ClientPlatform
-from vpn_client.policy import PolicyEngine
+from vpn_client.policy import PolicyEngine, validate_transport_reenable_policy
 from vpn_client.state import StateManager, StateStore
 
 import tempfile
@@ -158,6 +158,43 @@ class PolicyEngineTests(unittest.TestCase):
 
         self.assertEqual(resolved.checks, 2)
         self.assertTrue(resolved.auto_reconnect)
+
+    def test_policy_engine_resolves_transport_reenable_policy_by_transport(self) -> None:
+        manifest = Manifest(
+            version=1,
+            generated_at="2026-04-23T00:00:00Z",
+            expires_at="2026-04-30T00:00:00Z",
+            endpoints=[],
+            transport_policy=TransportPolicy(preferred_order=["https"]),
+            network_policy=NetworkPolicy(),
+            features={
+                "transport_reenable_policy": {
+                    "default": {"retry_delay_seconds": 180, "max_retry_delay_seconds": 1200},
+                    "by_transport": {
+                        "wireguard": {"retry_delay_seconds": 300, "max_retry_delay_seconds": 2400},
+                    },
+                }
+            },
+        )
+
+        default_resolved = PolicyEngine().resolve_transport_reenable_policy(manifest, transport="https")
+        wireguard_resolved = PolicyEngine().resolve_transport_reenable_policy(manifest, transport="wireguard")
+
+        self.assertEqual(default_resolved.retry_delay_seconds, 180)
+        self.assertEqual(default_resolved.max_retry_delay_seconds, 1200)
+        self.assertEqual(wireguard_resolved.retry_delay_seconds, 300)
+        self.assertEqual(wireguard_resolved.max_retry_delay_seconds, 2400)
+
+    def test_validate_transport_reenable_policy_rejects_invalid_bounds(self) -> None:
+        with self.assertRaises(ValueError):
+            validate_transport_reenable_policy(
+                {
+                    "default": {
+                        "retry_delay_seconds": 30,
+                        "max_retry_delay_seconds": 1800,
+                    }
+                }
+            )
 
 
 if __name__ == "__main__":

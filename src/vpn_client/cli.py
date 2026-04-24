@@ -287,6 +287,15 @@ def main() -> int:
         client_platform=client_platform,
         transport=report.selected_transport,
     )
+    resolved_transport_reenable_policy = {
+        transport_name: asdict(
+            orchestrator.policy_engine.resolve_transport_reenable_policy(
+                manifest,
+                transport=transport_name,
+            )
+        )
+        for transport_name in sorted({endpoint.transport for endpoint in manifest.endpoints})
+    }
     effective_health_checks = (
         args.health_checks if args.health_checks is not None else effective_session_health_policy.checks
     )
@@ -463,6 +472,7 @@ def main() -> int:
                     "checks": effective_health_checks,
                     "auto_reconnect": effective_auto_reconnect,
                 },
+                "transport_reenable_policy_resolved": resolved_transport_reenable_policy,
                 "incident_flags": state_manager.state.incident_flags,
                 "incident_flag_expires_at": state_manager.state.incident_flag_expires_at,
                 "transport_recovery": {

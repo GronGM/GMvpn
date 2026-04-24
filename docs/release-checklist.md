@@ -57,8 +57,10 @@ It is intentionally narrower than a full cross-platform product release.
   - `dataplane_runtime`
   - `runtime_support`
   - `session_health_policy_resolved`
+  - `transport_reenable_policy_resolved`
 - Confirm `runtime_support.tier` and `runtime_support.in_mvp_scope` are present.
 - Confirm `endpoint_health[*].last_reason_code` and transport soft-failure buckets are present.
+- Confirm background re-enable policy values are bounded and visible for the transports you expect to support.
 - Confirm bundle output remains bounded and does not dump unreviewed sensitive material.
 
 ## Operator-Facing Sanity Check

@@ -19,6 +19,12 @@ class SessionHealthPolicy:
     auto_reconnect: bool = False
 
 
+@dataclass(slots=True)
+class TransportReenablePolicy:
+    retry_delay_seconds: int = 120
+    max_retry_delay_seconds: int = 1800
+
+
 def validate_incident_guidance_overrides(overrides: object) -> None:
     if not isinstance(overrides, dict):
         raise ValueError("incident_guidance_overrides must be an object")
@@ -79,6 +85,34 @@ def validate_session_health_policy(policy: object) -> None:
             )
 
 
+def validate_transport_reenable_policy(policy: object) -> None:
+    if not isinstance(policy, dict):
+        raise ValueError("transport_reenable_policy must be an object")
+
+    allowed_keys = {"default", "by_transport"}
+    unexpected = set(policy) - allowed_keys
+    if unexpected:
+        raise ValueError(f"transport_reenable_policy contains unsupported keys: {', '.join(sorted(unexpected))}")
+
+    if "default" in policy:
+        _validate_transport_reenable_policy_override(
+            policy["default"],
+            context="transport_reenable_policy.default",
+        )
+
+    by_transport = policy.get("by_transport")
+    if by_transport is not None:
+        if not isinstance(by_transport, dict):
+            raise ValueError("transport_reenable_policy.by_transport must be an object")
+        for transport_name, override in by_transport.items():
+            if not isinstance(transport_name, str) or not transport_name:
+                raise ValueError("transport_reenable_policy.by_transport keys must be non-empty strings")
+            _validate_transport_reenable_policy_override(
+                override,
+                context=f"transport_reenable_policy.by_transport.{transport_name}",
+            )
+
+
 def _validate_session_health_policy_override(override: object, context: str) -> None:
     if not isinstance(override, dict):
         raise ValueError(f"{context} must be an object")
@@ -95,6 +129,41 @@ def _validate_session_health_policy_override(override: object, context: str) -> 
     auto_reconnect = override.get("auto_reconnect")
     if auto_reconnect is not None and not isinstance(auto_reconnect, bool):
         raise ValueError(f"{context}.auto_reconnect must be a boolean")
+
+
+def _validate_transport_reenable_policy_override(override: object, context: str) -> None:
+    if not isinstance(override, dict):
+        raise ValueError(f"{context} must be an object")
+
+    allowed_keys = {"retry_delay_seconds", "max_retry_delay_seconds"}
+    unexpected = set(override) - allowed_keys
+    if unexpected:
+        raise ValueError(f"{context} contains unsupported keys: {', '.join(sorted(unexpected))}")
+
+    retry_delay_seconds = override.get("retry_delay_seconds")
+    if retry_delay_seconds is not None and (
+        not isinstance(retry_delay_seconds, int)
+        or isinstance(retry_delay_seconds, bool)
+        or retry_delay_seconds < 60
+        or retry_delay_seconds > 900
+    ):
+        raise ValueError(f"{context}.retry_delay_seconds must be an integer between 60 and 900")
+
+    max_retry_delay_seconds = override.get("max_retry_delay_seconds")
+    if max_retry_delay_seconds is not None and (
+        not isinstance(max_retry_delay_seconds, int)
+        or isinstance(max_retry_delay_seconds, bool)
+        or max_retry_delay_seconds < 120
+        or max_retry_delay_seconds > 3600
+    ):
+        raise ValueError(f"{context}.max_retry_delay_seconds must be an integer between 120 and 3600")
+
+    if (
+        retry_delay_seconds is not None
+        and max_retry_delay_seconds is not None
+        and max_retry_delay_seconds < retry_delay_seconds
+    ):
+        raise ValueError(f"{context}.max_retry_delay_seconds must be greater than or equal to retry_delay_seconds")
 
 
 class PolicyEngine:
@@ -153,6 +222,24 @@ class PolicyEngine:
             )
         if transport is not None:
             resolved = _merge_session_health_policy(
+                resolved,
+                raw_policy.get("by_transport", {}).get(transport),
+            )
+        return resolved
+
+    def resolve_transport_reenable_policy(
+        self,
+        manifest: Manifest,
+        transport: str | None = None,
+    ) -> TransportReenablePolicy:
+        resolved = TransportReenablePolicy()
+        raw_policy = manifest.features.get("transport_reenable_policy")
+        if not isinstance(raw_policy, dict):
+            return resolved
+
+        resolved = _merge_transport_reenable_policy(resolved, raw_policy.get("default"))
+        if transport is not None:
+            resolved = _merge_transport_reenable_policy(
                 resolved,
                 raw_policy.get("by_transport", {}).get(transport),
             )
@@ -235,4 +322,16 @@ def _merge_session_health_policy(base: SessionHealthPolicy, override: object) ->
         merged = replace(merged, checks=override["checks"])
     if "auto_reconnect" in override:
         merged = replace(merged, auto_reconnect=override["auto_reconnect"])
+    return merged
+
+
+def _merge_transport_reenable_policy(base: TransportReenablePolicy, override: object) -> TransportReenablePolicy:
+    if not isinstance(override, dict):
+        return base
+
+    merged = base
+    if "retry_delay_seconds" in override:
+        merged = replace(merged, retry_delay_seconds=override["retry_delay_seconds"])
+    if "max_retry_delay_seconds" in override:
+        merged = replace(merged, max_retry_delay_seconds=override["max_retry_delay_seconds"])
     return merged

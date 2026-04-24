@@ -61,6 +61,22 @@ class StateManagerTests(unittest.TestCase):
             self.assertEqual(manager.transport_reenable_fail_streak("https"), 2)
             self.assertGreater(second_expiry, first_expiry)
 
+    def test_transport_reenable_failures_respect_max_retry_delay(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            manager = StateManager(StateStore(Path(tmp) / "state.json"))
+            for _ in range(4):
+                manager.fail_transport_reenable(
+                    "https",
+                    retry_delay_seconds=120,
+                    max_retry_delay_seconds=300,
+                )
+                manager.state.incident_flags["disable_transport_https"] = False
+
+            expiry = datetime.fromisoformat(manager.state.incident_flag_expires_at["disable_transport_https"])
+            now = datetime.now(timezone.utc)
+
+            self.assertLessEqual((expiry - now).total_seconds(), 310)
+
     def test_stale_runtime_penalizes_endpoint_and_increments_transport_crash_streak(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             manager = StateManager(StateStore(Path(tmp) / "state.json"))
