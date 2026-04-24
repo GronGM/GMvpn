@@ -58,6 +58,7 @@ def build_provider_profile_manifest(
     _validate_provider_profile_schema_version(provider_profile_schema_version)
     manifest_features = dict(features or {})
     manifest_features["profile_kind"] = "provider-profile"
+    _validate_unique_logical_servers(logical_servers)
 
     endpoints: list[dict[str, object]] = []
     for server in logical_servers:
@@ -126,3 +127,14 @@ def _validate_provider_profile_schema_version(schema_version: int) -> None:
             "unsupported provider_profile_schema_version "
             f"'{schema_version}'; supported version is '{PROVIDER_PROFILE_SCHEMA_VERSION}'"
         )
+
+
+def _validate_unique_logical_servers(logical_servers: list[dict[str, object]]) -> None:
+    seen: set[str] = set()
+    for server in logical_servers:
+        logical_server = str(server.get("logical_server", ""))
+        if not logical_server:
+            raise ProviderCompileError("logical server entry is missing logical_server")
+        if logical_server in seen:
+            raise ProviderCompileError(f"duplicate logical_server '{logical_server}'")
+        seen.add(logical_server)
