@@ -16,6 +16,10 @@ Current scope:
 - CLI demo for local testing;
 - unit tests covering trust and orchestration behavior.
 
+Manifest files now also carry an explicit top-level `schema_version`.
+Provider-style manifests additionally carry `provider_profile_schema_version`.
+The loader currently supports version `1` for both contracts and will reject unsupported future versions until compatibility logic is expanded deliberately.
+
 This is not a production VPN yet. It is the control-plane and orchestration skeleton that a production-grade client can grow on top of.
 
 ## Repository Layout

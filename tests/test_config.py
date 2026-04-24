@@ -11,6 +11,7 @@ from vpn_client.security import Ed25519Verifier, generate_keypair, sign_payload
 def signed_manifest(private_pem: bytes) -> dict:
     manifest = {
         "version": 1,
+        "schema_version": 1,
         "generated_at": "2026-04-23T00:00:00Z",
         "expires_at": "2026-04-30T00:00:00Z",
         "platform_capabilities": {
@@ -66,6 +67,7 @@ class SignedManifestLoaderTests(unittest.TestCase):
             self.assertEqual(manifest.version, 1)
             self.assertTrue(store.last_known_good_path.exists())
             self.assertIn("linux", manifest.platform_capabilities)
+            self.assertEqual(manifest.schema_version, 1)
 
     def test_loader_uses_cached_copy_when_primary_fails(self) -> None:
         private_pem, public_pem = generate_keypair()
@@ -101,6 +103,108 @@ class SignedManifestLoaderTests(unittest.TestCase):
 
             with self.assertRaises(Exception):
                 loader.load_dict(expired)
+
+    def test_loader_accepts_missing_schema_version_as_current_default(self) -> None:
+        private_pem, public_pem = generate_keypair()
+        verifier = Ed25519Verifier.from_public_key_pem(public_pem)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            store = ManifestStore(Path(tmp) / "cache")
+            loader = SignedManifestLoader(verifier=verifier, store=store)
+
+            manifest = signed_manifest(private_pem)
+            manifest.pop("schema_version")
+            manifest["signature"] = sign_payload(private_pem, canonical_manifest_bytes(manifest))
+
+            loaded = loader.load_dict(manifest)
+
+            self.assertEqual(loaded.schema_version, 1)
+
+    def test_loader_rejects_unsupported_manifest_schema_version(self) -> None:
+        private_pem, public_pem = generate_keypair()
+        verifier = Ed25519Verifier.from_public_key_pem(public_pem)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            store = ManifestStore(Path(tmp) / "cache")
+            loader = SignedManifestLoader(verifier=verifier, store=store)
+
+            manifest = signed_manifest(private_pem)
+            manifest["schema_version"] = 2
+            manifest["signature"] = sign_payload(private_pem, canonical_manifest_bytes(manifest))
+
+            with self.assertRaises(Exception) as ctx:
+                loader.load_dict(manifest)
+
+            self.assertIn("unsupported manifest schema_version", str(ctx.exception))
+
+    def test_loader_accepts_provider_profile_schema_version_for_provider_profile(self) -> None:
+        private_pem, public_pem = generate_keypair()
+        verifier = Ed25519Verifier.from_public_key_pem(public_pem)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            store = ManifestStore(Path(tmp) / "cache")
+            loader = SignedManifestLoader(verifier=verifier, store=store)
+
+            manifest = signed_manifest(private_pem)
+            manifest["features"]["profile_kind"] = "provider-profile"
+            manifest["provider_profile_schema_version"] = 1
+            manifest["signature"] = sign_payload(private_pem, canonical_manifest_bytes(manifest))
+
+            loaded = loader.load_dict(manifest)
+
+            self.assertEqual(loaded.provider_profile_schema_version, 1)
+
+    def test_loader_accepts_missing_provider_profile_schema_version_as_current_default(self) -> None:
+        private_pem, public_pem = generate_keypair()
+        verifier = Ed25519Verifier.from_public_key_pem(public_pem)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            store = ManifestStore(Path(tmp) / "cache")
+            loader = SignedManifestLoader(verifier=verifier, store=store)
+
+            manifest = signed_manifest(private_pem)
+            manifest["features"]["profile_kind"] = "provider-profile"
+            manifest.pop("provider_profile_schema_version", None)
+            manifest["signature"] = sign_payload(private_pem, canonical_manifest_bytes(manifest))
+
+            loaded = loader.load_dict(manifest)
+
+            self.assertIsNone(loaded.provider_profile_schema_version)
+
+    def test_loader_rejects_unsupported_provider_profile_schema_version(self) -> None:
+        private_pem, public_pem = generate_keypair()
+        verifier = Ed25519Verifier.from_public_key_pem(public_pem)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            store = ManifestStore(Path(tmp) / "cache")
+            loader = SignedManifestLoader(verifier=verifier, store=store)
+
+            manifest = signed_manifest(private_pem)
+            manifest["features"]["profile_kind"] = "provider-profile"
+            manifest["provider_profile_schema_version"] = 2
+            manifest["signature"] = sign_payload(private_pem, canonical_manifest_bytes(manifest))
+
+            with self.assertRaises(Exception) as ctx:
+                loader.load_dict(manifest)
+
+            self.assertIn("unsupported provider_profile_schema_version", str(ctx.exception))
+
+    def test_loader_rejects_provider_profile_schema_version_without_provider_profile_kind(self) -> None:
+        private_pem, public_pem = generate_keypair()
+        verifier = Ed25519Verifier.from_public_key_pem(public_pem)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            store = ManifestStore(Path(tmp) / "cache")
+            loader = SignedManifestLoader(verifier=verifier, store=store)
+
+            manifest = signed_manifest(private_pem)
+            manifest["provider_profile_schema_version"] = 1
+            manifest["signature"] = sign_payload(private_pem, canonical_manifest_bytes(manifest))
+
+            with self.assertRaises(Exception) as ctx:
+                loader.load_dict(manifest)
+
+            self.assertIn("profile_kind='provider-profile'", str(ctx.exception))
 
     def test_loader_accepts_valid_incident_guidance_overrides(self) -> None:
         private_pem, public_pem = generate_keypair()

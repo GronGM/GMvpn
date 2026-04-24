@@ -1,5 +1,6 @@
 {
   "version": 1,
+  "schema_version": 1,
   "generated_at": "2026-04-23T00:00:00Z",
   "expires_at": "2026-04-30T00:00:00Z",
   "platform_capabilities": {
@@ -135,5 +136,5 @@
       }
     }
   ],
-  "signature": "WJwayaikBVbFB66r/kUElpxSN/LsL1jphM9HyVoWpIv5fCSuGNGxwVQKcA62GB1z68EsODX6a6vTI7um+niRAQ=="
+  "signature": "CrGwty3OFuK0dCTF1k2TVBqLNDcxTmQaAFWe3lkFvzJJHBDOcRrB+KflOJs97yip/b/7s01NClQopxvulQBFAw=="
 }

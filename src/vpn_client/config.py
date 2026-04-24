@@ -32,6 +32,10 @@ class ManifestError(Exception):
     """Raised when manifest loading fails."""
 
 
+MANIFEST_SCHEMA_VERSION = 1
+PROVIDER_PROFILE_SCHEMA_VERSION = 1
+
+
 def canonical_manifest_bytes(data: dict) -> bytes:
     payload = {key: value for key, value in data.items() if key != "signature"}
     return json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
@@ -61,6 +65,12 @@ def manifest_from_dict(data: dict) -> Manifest:
         network_policy=network_policy,
         platform_capabilities=platform_capabilities,
         features=data.get("features", {}),
+        schema_version=int(data.get("schema_version", MANIFEST_SCHEMA_VERSION)),
+        provider_profile_schema_version=(
+            int(data["provider_profile_schema_version"])
+            if data.get("provider_profile_schema_version") is not None
+            else None
+        ),
     )
 
 
@@ -75,6 +85,7 @@ def _parse_utc_timestamp(value: str) -> datetime:
 def validate_manifest(manifest: Manifest) -> None:
     if manifest.version < 1:
         raise ManifestError("manifest version must be positive")
+    _validate_manifest_schema_version(manifest)
     if not manifest.endpoints:
         raise ManifestError("manifest must contain at least one endpoint")
     if _parse_utc_timestamp(manifest.expires_at) <= datetime.now(timezone.utc):
@@ -108,6 +119,28 @@ def validate_manifest(manifest: Manifest) -> None:
                 validate_ios_bridge_endpoint_metadata(endpoint)
             except IOSBridgeConfigError as exc:
                 raise ManifestError(str(exc)) from exc
+
+
+def _validate_manifest_schema_version(manifest: Manifest) -> None:
+    if manifest.schema_version < 1:
+        raise ManifestError("manifest schema_version must be positive")
+    if manifest.schema_version != MANIFEST_SCHEMA_VERSION:
+        raise ManifestError(
+            f"unsupported manifest schema_version '{manifest.schema_version}'; supported version is '{MANIFEST_SCHEMA_VERSION}'"
+        )
+
+    profile_kind = manifest.features.get("profile_kind")
+    if profile_kind == "provider-profile":
+        provider_schema_version = manifest.provider_profile_schema_version or PROVIDER_PROFILE_SCHEMA_VERSION
+        if provider_schema_version < 1:
+            raise ManifestError("provider_profile_schema_version must be positive")
+        if provider_schema_version != PROVIDER_PROFILE_SCHEMA_VERSION:
+            raise ManifestError(
+                "unsupported provider_profile_schema_version "
+                f"'{provider_schema_version}'; supported version is '{PROVIDER_PROFILE_SCHEMA_VERSION}'"
+            )
+    elif manifest.provider_profile_schema_version is not None:
+        raise ManifestError("provider_profile_schema_version requires features.profile_kind='provider-profile'")
 
 
 def _validate_endpoint_platform_targeting(endpoint: Endpoint) -> None:
@@ -204,6 +237,7 @@ def manifest_to_dict(manifest: Manifest) -> dict:
     data = asdict(manifest)
     return {
         "version": data["version"],
+        "schema_version": data["schema_version"],
         "generated_at": data["generated_at"],
         "expires_at": data["expires_at"],
         "endpoints": data["endpoints"],
@@ -211,4 +245,5 @@ def manifest_to_dict(manifest: Manifest) -> dict:
         "network_policy": data["network_policy"],
         "platform_capabilities": data["platform_capabilities"],
         "features": data["features"],
+        "provider_profile_schema_version": data["provider_profile_schema_version"],
     }

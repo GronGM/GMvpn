@@ -83,6 +83,8 @@ class Manifest:
     network_policy: NetworkPolicy = field(default_factory=NetworkPolicy)
     platform_capabilities: dict[str, PlatformCapability] = field(default_factory=dict)
     features: dict[str, object] = field(default_factory=dict)
+    schema_version: int = 1
+    provider_profile_schema_version: int | None = None
 
 
 @dataclass(slots=True)

@@ -26,6 +26,7 @@ def main() -> None:
 
     manifest = {
         "version": 1,
+        "schema_version": 1,
         "generated_at": "2026-04-23T00:00:00Z",
         "expires_at": "2026-04-30T00:00:00Z",
         "platform_capabilities": {
@@ -229,6 +230,8 @@ def main() -> None:
 
     provider_profile_manifest = {
         "version": 1,
+        "schema_version": 1,
+        "provider_profile_schema_version": 1,
         "generated_at": "2026-04-23T00:00:00Z",
         "expires_at": "2026-04-30T00:00:00Z",
         "platform_capabilities": manifest["platform_capabilities"],
