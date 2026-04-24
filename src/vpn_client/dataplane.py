@@ -77,6 +77,7 @@ class NullDataPlane(DataPlaneBackend):
             "backend": self.name,
             "active": self.session is not None,
             "pid": None,
+            "running": None,
             "restart_count": 0,
             "crashed": False,
             "crash_reason": None,
@@ -148,6 +149,7 @@ class RoutedDataPlane(DataPlaneBackend):
                 "active_backend": None,
                 "active": False,
                 "pid": None,
+                "running": None,
                 "restart_count": 0,
                 "crashed": False,
                 "crash_reason": None,
@@ -236,7 +238,7 @@ class BackendProcessSupervisor:
         if snapshot is None or not snapshot.running:
             self.crashed = True
             self.last_exit_code = snapshot.exit_code if snapshot is not None else self.last_exit_code
-            self.crash_reason = "data plane backend is no longer running"
+            self.crash_reason = self._build_exit_reason(snapshot)
             raise DataPlaneError(
                 FailureClass.NETWORK_DOWN,
                 self.crash_reason,
@@ -253,17 +255,20 @@ class BackendProcessSupervisor:
             self.stderr_tail = stderr_tail[-400:]
 
     def runtime_snapshot(self) -> dict:
+        running: bool | None = None
         if self._active_pid is not None:
             snapshot = self.process_adapter.snapshot(self._active_pid)
             if snapshot is not None:
+                running = snapshot.running
                 self.stdout_tail = snapshot.stdout_tail[-400:]
                 self.stderr_tail = snapshot.stderr_tail[-400:]
                 self.last_exit_code = snapshot.exit_code if not snapshot.running else self.last_exit_code
                 if not snapshot.running:
                     self.crashed = True
-                    self.crash_reason = self.crash_reason or "data plane backend exited"
+                    self.crash_reason = self.crash_reason or self._build_exit_reason(snapshot)
         return {
             "pid": self._active_pid,
+            "running": running,
             "command": self._active_command,
             "restart_count": self.restart_count,
             "crashed": self.crashed,
@@ -272,6 +277,23 @@ class BackendProcessSupervisor:
             "stdout_tail": self.stdout_tail,
             "stderr_tail": self.stderr_tail,
         }
+
+    def _build_exit_reason(self, snapshot) -> str:
+        if snapshot is None:
+            return "data plane backend is no longer running"
+
+        detail_parts = ["data plane backend exited"]
+        if snapshot.exit_code is not None:
+            detail_parts.append(f"with code {snapshot.exit_code}")
+
+        stderr_excerpt = snapshot.stderr_tail.strip()
+        stdout_excerpt = snapshot.stdout_tail.strip()
+        if stderr_excerpt:
+            detail_parts.append(f"stderr: {stderr_excerpt[-120:]}")
+        elif stdout_excerpt:
+            detail_parts.append(f"stdout: {stdout_excerpt[-120:]}")
+
+        return "; ".join(detail_parts)
 
 
 class LinuxUserspaceDataPlane(DataPlaneBackend):
@@ -349,7 +371,11 @@ class LinuxUserspaceDataPlane(DataPlaneBackend):
                 "data plane session is not active",
                 reason_code=FailureReasonCode.DATAPLANE_SESSION_INACTIVE,
             )
-        self.supervisor.assert_healthy(self.session.pid, dry_run=self.session.dry_run)
+        try:
+            self.supervisor.assert_healthy(self.session.pid, dry_run=self.session.dry_run)
+        except DataPlaneError:
+            self._persist_state(active=False)
+            raise
 
     def runtime_snapshot(self) -> dict:
         snapshot = self.supervisor.runtime_snapshot()
@@ -358,6 +384,7 @@ class LinuxUserspaceDataPlane(DataPlaneBackend):
             "active": self.session is not None,
             "endpoint_id": self.session.endpoint_id if self.session else None,
             "pid": snapshot["pid"],
+            "running": snapshot["running"],
             "restart_count": snapshot["restart_count"],
             "crashed": snapshot["crashed"],
             "crash_reason": snapshot["crash_reason"],

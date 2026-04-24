@@ -58,6 +58,7 @@ Immediate actions:
 
 - Inspect `transport_recovery[*].crash_reason`.
 - Inspect `backend_state_record` and `dataplane_runtime`.
+- If `dataplane_runtime.crashed = true`, inspect `last_exit_code`, `running`, and stderr/stdout tails before retrying.
 - Watch for repeated crashes on the same transport after recovery.
 
 Escalate when:
@@ -161,6 +162,7 @@ For the current MVP contour, focus on these ownership boundaries:
   - process startup
   - process liveness
   - crash output / exit behavior
+  - post-start exit attribution
 - Shared control plane:
   - endpoint selection
   - cooldown and retry budget

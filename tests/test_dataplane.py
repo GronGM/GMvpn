@@ -276,6 +276,54 @@ class XrayCoreDataPlaneTests(unittest.TestCase):
             self.assertEqual(snapshot["preflight_error"], "xray-core binary 'xray-missing' was not found in PATH")
             self.assertIsNone(snapshot["config_path"])
 
+    def test_xray_dataplane_attributes_post_start_exit_with_runtime_details(self) -> None:
+        endpoint = Endpoint(
+            id="edge-ru-1",
+            host="198.51.100.20",
+            port=443,
+            transport="https",
+            region="ru-spb",
+            metadata={
+                "xray_protocol": "vless",
+                "xray_user_id": "11111111-1111-1111-1111-111111111111",
+                "xray_stream_network": "tcp",
+                "xray_security": "tls",
+                "xray_server_name": "cdn.example.net",
+            },
+        )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            store = BackendStateStore(Path(tmp) / "backend-state.json")
+            backend = XrayCoreDataPlane(
+                interface_name="tun42",
+                dry_run=False,
+                config_dir=Path(tmp) / "xray",
+                state_store=store,
+                binary_path="python",
+                binary_exists=lambda _name: "/usr/bin/python",
+            )
+
+            backend.connect(endpoint)
+            time.sleep(0.2)
+
+            with self.assertRaises(DataPlaneError) as ctx:
+                backend.health_check(endpoint)
+
+            snapshot = backend.runtime_snapshot()
+            record = store.load()
+
+            self.assertEqual(ctx.exception.reason_code, FailureReasonCode.DATAPLANE_BACKEND_CRASHED)
+            self.assertIn("data plane backend exited", ctx.exception.detail)
+            self.assertIn("with code", ctx.exception.detail)
+            self.assertIn("stderr:", ctx.exception.detail)
+            self.assertFalse(snapshot["running"])
+            self.assertTrue(snapshot["crashed"])
+            self.assertEqual(snapshot["crash_reason"], ctx.exception.detail)
+            self.assertIsNotNone(record)
+            self.assertFalse(record.active)
+            self.assertTrue(record.crashed)
+            self.assertEqual(record.crash_reason, ctx.exception.detail)
+
 
 class RoutedDataPlaneTests(unittest.TestCase):
     def test_router_selects_backend_from_endpoint_metadata(self) -> None:

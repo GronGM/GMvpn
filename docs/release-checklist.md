@@ -48,6 +48,7 @@ It is intentionally narrower than a full cross-platform product release.
 - Confirm the Linux runtime contour still renders the expected Xray config and platform command plan.
 - Confirm real-mode failures for missing Linux or Xray prerequisites surface explicit preflight diagnostics.
 - Confirm Linux cleanup paths report partial reconciliation or teardown without hiding that cleanup remained incomplete.
+- Confirm post-start Xray exits retain attributed crash details including observed running state and exit output tails.
 - Confirm incident summary generation still runs for degraded or failed sessions.
 
 ## Support Bundle Contract
