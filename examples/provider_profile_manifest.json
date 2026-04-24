@@ -14,7 +14,7 @@
       ],
       "network_adapter": "linux",
       "startup_reconciliation": true,
-      "status": "prototype",
+      "status": "mvp-supported",
       "notes": "Linux keeps the real command-planning network adapter in this repository."
     },
     "windows": {
@@ -24,7 +24,7 @@
         "routed"
       ],
       "network_adapter": "windows",
-      "status": "planned",
+      "status": "bridge-only",
       "notes": "Desktop Windows path is expected to use xray-core with a native route and DNS adapter."
     },
     "macos": {
