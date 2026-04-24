@@ -189,6 +189,7 @@ class CliTests(unittest.TestCase):
                 "recommended_action=Try an alternate transport or resolver path and inspect local interference signals before retrying.",
                 output,
             )
+            self.assertNotIn("primary_transport_issue=", output)
             self.assertEqual(payload["events"][-1]["kind"], "incident_summary")
             self.assertEqual(payload["events"][-1]["failure_class"], "tls_interference")
 
@@ -695,6 +696,7 @@ class CliTests(unittest.TestCase):
             public_key_path = tmp_path / "public.pem"
             manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
             public_key_path.write_bytes(public_pem)
+            stdout = io.StringIO()
             argv = [
                 "vpn-client",
                 "--manifest",
@@ -719,11 +721,17 @@ class CliTests(unittest.TestCase):
                 "routed",
             ]
 
-            with patch("sys.argv", argv):
+            with patch("sys.argv", argv), contextlib.redirect_stdout(stdout):
                 exit_code = cli.main()
 
+            output = stdout.getvalue()
             self.assertEqual(exit_code, 1)
             self.assertTrue((tmp_path / "ios-bridge" / "ios-1.json").exists())
+            self.assertIn("incident_summary:", output)
+            self.assertIn(
+                "primary_transport_issue=https disabled=False pending_reenable=False crash_bucket=None soft_fail_bucket=unknown:dataplane_backend_unsupported",
+                output,
+            )
 
     def test_cli_provider_profile_selects_platform_specific_endpoint(self) -> None:
         root = Path(__file__).resolve().parents[1]

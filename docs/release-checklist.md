@@ -63,6 +63,7 @@ It is intentionally narrower than a full cross-platform product release.
 - Confirm `endpoint_health[*].last_reason_code` and transport soft-failure buckets are present.
 - Confirm background re-enable policy values are bounded and visible for the transports you expect to support.
 - Confirm crash and soft-failure disable policy values are bounded and visible for the transports you expect to support.
+- Confirm `incident_summary.primary_transport_issue` is populated for degraded scenarios where one transport is the obvious local focus.
 - Confirm bundle output remains bounded and does not dump unreviewed sensitive material.
 
 ## Operator-Facing Sanity Check

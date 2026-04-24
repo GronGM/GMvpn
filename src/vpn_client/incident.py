@@ -37,6 +37,22 @@ def _is_mitigation_flag(name: str) -> bool:
     )
 
 
+def _transport_issue_priority(item: dict[str, object], selected_transport: str | None) -> tuple[int, int, str]:
+    if item["disabled"]:
+        severity_rank = 0
+    elif item["pending_reenable"]:
+        severity_rank = 1
+    elif item["crash_bucket"] is not None:
+        severity_rank = 2
+    elif item["soft_fail_bucket"] is not None:
+        severity_rank = 3
+    else:
+        severity_rank = 4
+
+    selected_rank = 0 if item["transport"] == selected_transport else 1
+    return severity_rank, selected_rank, str(item["transport"])
+
+
 def build_incident_summary(
     state_manager: StateManager,
     report: _ReportLike,
@@ -71,6 +87,47 @@ def build_incident_summary(
         transport
         for transport, pending in state_manager.state.transport_reenable_pending.items()
         if pending
+    )
+    transport_focus = [
+        {
+            "transport": transport,
+            "disabled": bool(state_manager.state.incident_flags.get(f"disable_transport_{transport}", False)),
+            "pending_reenable": bool(state_manager.state.transport_reenable_pending.get(transport, False)),
+            "crash_bucket": state_manager.state.transport_crash_buckets.get(transport),
+            "crash_reason": state_manager.state.transport_crash_reasons.get(transport),
+            "soft_fail_bucket": state_manager.state.transport_soft_fail_buckets.get(transport),
+        }
+        for transport in sorted(
+            {
+                *state_manager.state.transport_crash_buckets.keys(),
+                *state_manager.state.transport_crash_reasons.keys(),
+                *state_manager.state.transport_soft_fail_buckets.keys(),
+                *state_manager.state.transport_reenable_pending.keys(),
+                *{
+                    name.removeprefix("disable_transport_")
+                    for name in active_disable_flags
+                },
+            }
+        )
+    ]
+    primary_transport_issue_candidates = [
+        item
+        for item in transport_focus
+        if (
+            item["disabled"]
+            or item["pending_reenable"]
+            or item["crash_bucket"] is not None
+            or item["crash_reason"] is not None
+            or item["soft_fail_bucket"] is not None
+        )
+    ]
+    primary_transport_issue = (
+        min(
+            primary_transport_issue_candidates,
+            key=lambda item: _transport_issue_priority(item, report.selected_transport),
+        )
+        if primary_transport_issue_candidates
+        else None
     )
     last_crash_transport = next(
         (
@@ -136,6 +193,8 @@ def build_incident_summary(
         "mitigation_flag_expires_at": mitigation_flag_expires_at,
         "cooling_down_endpoints": cooling_down_endpoints,
         "reenable_pending_transports": reenable_pending_transports,
+        "transport_focus": transport_focus,
+        "primary_transport_issue": primary_transport_issue,
         "last_crash_transport": last_crash_transport,
         "last_crash_reason": last_crash_reason,
     }

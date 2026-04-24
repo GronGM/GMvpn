@@ -27,6 +27,7 @@ Read these support bundle fields before changing anything:
 - `runtime_support`
 - `startup_recovery`
 - `transport_recovery`
+- `incident_summary.primary_transport_issue`
 - `endpoint_health`
 - `dataplane_runtime`
 - `session_health_policy_resolved`

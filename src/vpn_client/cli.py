@@ -432,6 +432,16 @@ def main() -> int:
         print(f"  - headline={incident_summary['headline']}")
         print(f"  - failure_class={incident_summary['failure_class']}")
         print(f"  - recommended_action={incident_summary['recommended_action']}")
+        if incident_summary["primary_transport_issue"] is not None:
+            primary = incident_summary["primary_transport_issue"]
+            print(
+                "  - primary_transport_issue="
+                f"{primary['transport']}"
+                f" disabled={primary['disabled']}"
+                f" pending_reenable={primary['pending_reenable']}"
+                f" crash_bucket={primary['crash_bucket']}"
+                f" soft_fail_bucket={primary['soft_fail_bucket']}"
+            )
 
     if args.support_bundle:
         backend_state_record = backend_state_store.load()
