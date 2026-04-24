@@ -7,7 +7,7 @@ from pathlib import Path
 
 from vpn_client.backend_state import BackendStateStore, now_utc_iso
 from vpn_client.dataplane import DataPlaneBackend, DataPlaneError, DataPlaneSession
-from vpn_client.models import DnsMode, Endpoint, FailureClass, NetworkPolicy, TunnelMode
+from vpn_client.models import DnsMode, Endpoint, FailureClass, FailureReasonCode, NetworkPolicy, TunnelMode
 
 
 class IOSBridgeConfigError(Exception):
@@ -258,6 +258,7 @@ class IOSBridgeDataPlane(DataPlaneBackend):
         raise DataPlaneError(
             FailureClass.UNKNOWN,
             "ios-bridge contract rendered, but the Apple Network Extension runtime is not wired yet",
+            reason_code=FailureReasonCode.DATAPLANE_BACKEND_UNSUPPORTED,
         )
 
     def disconnect(self) -> None:
@@ -269,6 +270,7 @@ class IOSBridgeDataPlane(DataPlaneBackend):
         raise DataPlaneError(
             FailureClass.UNKNOWN,
             "ios-bridge health checks are unavailable until the Apple runtime is implemented",
+            reason_code=FailureReasonCode.DATAPLANE_HEALTHCHECK_FAILED,
         )
 
     def runtime_snapshot(self) -> dict:
@@ -361,7 +363,11 @@ class IOSBridgeDataPlane(DataPlaneBackend):
     ) -> IOSBridgeStatus:
         status = self.load_status()
         if status is None or self.active_status_path is None:
-            raise DataPlaneError(FailureClass.UNKNOWN, "ios-bridge status file is not available")
+            raise DataPlaneError(
+                FailureClass.UNKNOWN,
+                "ios-bridge status file is not available",
+                reason_code=FailureReasonCode.DATAPLANE_SESSION_INACTIVE,
+            )
         updated = advance_ios_bridge_status(
             status,
             state=state,

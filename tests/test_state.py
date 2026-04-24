@@ -5,7 +5,7 @@ import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from vpn_client.models import FailureClass
+from vpn_client.models import FailureClass, FailureReasonCode
 from vpn_client.state import StateManager, StateStore
 
 
@@ -100,6 +100,49 @@ class StateManagerTests(unittest.TestCase):
 
             self.assertEqual(actions, ["disable_transport_wireguard"])
             self.assertTrue(manager.incident_flag("disable_transport_wireguard"))
+
+    def test_transport_soft_failure_resets_streak_when_reason_changes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            manager = StateManager(StateStore(Path(tmp) / "state.json"))
+
+            first = manager.record_transport_soft_failure(
+                "https",
+                FailureClass.NETWORK_DOWN,
+                FailureReasonCode.DATAPLANE_HEALTHCHECK_FAILED,
+            )
+            second = manager.record_transport_soft_failure(
+                "https",
+                FailureClass.NETWORK_DOWN,
+                FailureReasonCode.DATAPLANE_HEALTHCHECK_FAILED,
+            )
+            third = manager.record_transport_soft_failure(
+                "https",
+                FailureClass.NETWORK_DOWN,
+                FailureReasonCode.DATAPLANE_SESSION_INACTIVE,
+            )
+
+            self.assertFalse(first)
+            self.assertFalse(second)
+            self.assertFalse(third)
+            self.assertEqual(manager.transport_soft_fail_streak("https"), 1)
+            self.assertEqual(
+                manager.state.transport_soft_fail_buckets["https"],
+                "network_down:dataplane_session_inactive",
+            )
+
+    def test_session_health_failure_clears_after_recovery(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            manager = StateManager(StateStore(Path(tmp) / "state.json"))
+
+            confirmed = manager.record_session_health_failure(
+                FailureClass.NETWORK_DOWN,
+                FailureReasonCode.DATAPLANE_HEALTHCHECK_FAILED,
+                threshold=2,
+            )
+            self.assertFalse(confirmed)
+            self.assertTrue(manager.clear_session_health_failure())
+            self.assertEqual(manager.state.session_health_fail_streak, 0)
+            self.assertEqual(manager.state.session_health_fail_bucket, "")
 
 
 if __name__ == "__main__":

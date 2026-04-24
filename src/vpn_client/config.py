@@ -18,7 +18,7 @@ from vpn_client.desktop_policy import (
     validate_desktop_policy_endpoint_metadata,
 )
 from vpn_client.models import DnsMode, Endpoint, Manifest, NetworkPolicy, PlatformCapability, TransportPolicy, TunnelMode
-from vpn_client.policy import validate_incident_guidance_overrides
+from vpn_client.policy import validate_incident_guidance_overrides, validate_session_health_policy
 from vpn_client.security import Ed25519Verifier
 from vpn_client.ios_bridge import (
     IOSBridgeConfigError,
@@ -95,6 +95,12 @@ def validate_manifest(manifest: Manifest) -> None:
     if overrides is not None:
         try:
             validate_incident_guidance_overrides(overrides)
+        except ValueError as exc:
+            raise ManifestError(str(exc)) from exc
+    session_health_policy = manifest.features.get("session_health_policy")
+    if session_health_policy is not None:
+        try:
+            validate_session_health_policy(session_health_policy)
         except ValueError as exc:
             raise ManifestError(str(exc)) from exc
     _validate_provider_profile_contract(manifest)

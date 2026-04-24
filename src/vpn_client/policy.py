@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
+from vpn_client.client_platform import ClientPlatform
 from vpn_client.state import StateManager
 from vpn_client.models import DnsMode, FailureClass, Manifest, NetworkPolicy, TunnelMode
 
@@ -10,6 +11,12 @@ from vpn_client.models import DnsMode, FailureClass, Manifest, NetworkPolicy, Tu
 class IncidentGuidance:
     severity: str
     recommended_action: str
+
+
+@dataclass(slots=True)
+class SessionHealthPolicy:
+    checks: int = 0
+    auto_reconnect: bool = False
 
 
 def validate_incident_guidance_overrides(overrides: object) -> None:
@@ -32,6 +39,62 @@ def validate_incident_guidance_overrides(overrides: object) -> None:
             raise ValueError(f"incident guidance override for {failure_name} has invalid severity")
         if not isinstance(recommended_action, str) or not recommended_action.strip():
             raise ValueError(f"incident guidance override for {failure_name} must include a non-empty recommended_action")
+
+
+def validate_session_health_policy(policy: object) -> None:
+    if not isinstance(policy, dict):
+        raise ValueError("session_health_policy must be an object")
+
+    allowed_keys = {"default", "by_client_platform", "by_transport"}
+    unexpected = set(policy) - allowed_keys
+    if unexpected:
+        raise ValueError(f"session_health_policy contains unsupported keys: {', '.join(sorted(unexpected))}")
+
+    if "default" in policy:
+        _validate_session_health_policy_override(policy["default"], context="session_health_policy.default")
+
+    by_client_platform = policy.get("by_client_platform")
+    if by_client_platform is not None:
+        if not isinstance(by_client_platform, dict):
+            raise ValueError("session_health_policy.by_client_platform must be an object")
+        valid_platforms = {platform.value for platform in ClientPlatform}
+        for platform_name, override in by_client_platform.items():
+            if platform_name not in valid_platforms:
+                raise ValueError(f"session_health_policy.by_client_platform has unsupported platform '{platform_name}'")
+            _validate_session_health_policy_override(
+                override,
+                context=f"session_health_policy.by_client_platform.{platform_name}",
+            )
+
+    by_transport = policy.get("by_transport")
+    if by_transport is not None:
+        if not isinstance(by_transport, dict):
+            raise ValueError("session_health_policy.by_transport must be an object")
+        for transport_name, override in by_transport.items():
+            if not isinstance(transport_name, str) or not transport_name:
+                raise ValueError("session_health_policy.by_transport keys must be non-empty strings")
+            _validate_session_health_policy_override(
+                override,
+                context=f"session_health_policy.by_transport.{transport_name}",
+            )
+
+
+def _validate_session_health_policy_override(override: object, context: str) -> None:
+    if not isinstance(override, dict):
+        raise ValueError(f"{context} must be an object")
+
+    allowed_keys = {"checks", "auto_reconnect"}
+    unexpected = set(override) - allowed_keys
+    if unexpected:
+        raise ValueError(f"{context} contains unsupported keys: {', '.join(sorted(unexpected))}")
+
+    checks = override.get("checks")
+    if checks is not None and (not isinstance(checks, int) or isinstance(checks, bool) or checks < 0 or checks > 10):
+        raise ValueError(f"{context}.checks must be an integer between 0 and 10")
+
+    auto_reconnect = override.get("auto_reconnect")
+    if auto_reconnect is not None and not isinstance(auto_reconnect, bool):
+        raise ValueError(f"{context}.auto_reconnect must be a boolean")
 
 
 class PolicyEngine:
@@ -70,6 +133,30 @@ class PolicyEngine:
             ipv6_enabled=policy.ipv6_enabled and not features.get("disable_ipv6", False),
             allow_lan_while_connected=policy.allow_lan_while_connected,
         )
+
+    def resolve_session_health_policy(
+        self,
+        manifest: Manifest,
+        client_platform: ClientPlatform | None = None,
+        transport: str | None = None,
+    ) -> SessionHealthPolicy:
+        resolved = SessionHealthPolicy()
+        raw_policy = manifest.features.get("session_health_policy")
+        if not isinstance(raw_policy, dict):
+            return resolved
+
+        resolved = _merge_session_health_policy(resolved, raw_policy.get("default"))
+        if client_platform is not None:
+            resolved = _merge_session_health_policy(
+                resolved,
+                raw_policy.get("by_client_platform", {}).get(client_platform.value),
+            )
+        if transport is not None:
+            resolved = _merge_session_health_policy(
+                resolved,
+                raw_policy.get("by_transport", {}).get(transport),
+            )
+        return resolved
 
     def incident_guidance_for_failure(self, failure_class: FailureClass, manifest: Manifest | None = None) -> IncidentGuidance:
         override = self._incident_guidance_override(failure_class, manifest)
@@ -137,3 +224,15 @@ class PolicyEngine:
             severity=severity,
             recommended_action=recommended_action.strip(),
         )
+
+
+def _merge_session_health_policy(base: SessionHealthPolicy, override: object) -> SessionHealthPolicy:
+    if not isinstance(override, dict):
+        return base
+
+    merged = base
+    if "checks" in override:
+        merged = replace(merged, checks=override["checks"])
+    if "auto_reconnect" in override:
+        merged = replace(merged, auto_reconnect=override["auto_reconnect"])
+    return merged

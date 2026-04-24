@@ -6,7 +6,17 @@ from pathlib import Path
 
 from vpn_client.client_platform import ClientPlatform
 from vpn_client.dataplane import LinuxUserspaceDataPlane, RoutedDataPlane
-from vpn_client.models import DnsMode, Endpoint, FailureClass, Manifest, NetworkPolicy, SessionState, TransportPolicy, TunnelMode
+from vpn_client.models import (
+    DnsMode,
+    Endpoint,
+    FailureClass,
+    FailureReasonCode,
+    Manifest,
+    NetworkPolicy,
+    SessionState,
+    TransportPolicy,
+    TunnelMode,
+)
 from vpn_client.platform import SimulatedNetworkStack
 from vpn_client.policy import PolicyEngine
 from vpn_client.probe import ProbeEngine
@@ -702,9 +712,106 @@ class SessionOrchestratorTests(unittest.TestCase):
 
             self.assertEqual(monitored.state, SessionState.DEGRADED)
             self.assertEqual(monitored.failure_class, FailureClass.NETWORK_DOWN)
+            self.assertEqual(monitored.reason_code, FailureReasonCode.DATAPLANE_HEALTHCHECK_FAILED)
             self.assertIsNone(runtime_state.load_marker())
             self.assertIsNone(dataplane.session)
-            self.assertTrue(any(event.kind == "session_degraded" for event in telemetry.events))
+            degraded_event = next(event for event in telemetry.events if event.kind == "session_degraded")
+            self.assertEqual(degraded_event.reason_code, FailureReasonCode.DATAPLANE_HEALTHCHECK_FAILED.value)
+
+    def test_monitor_connection_suppresses_single_soft_failure_with_state_manager(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            runtime_state = RuntimeState(Path(tmp) / "marker.json")
+            telemetry = TelemetryRecorder()
+            state_manager = StateManager(StateStore(Path(tmp) / "state.json"))
+            dataplane = LinuxUserspaceDataPlane(dry_run=True)
+            orchestrator = SessionOrchestrator(
+                default_transport_registry(),
+                ProbeEngine(),
+                network_stack=SimulatedNetworkStack(),
+                telemetry=telemetry,
+                dataplane=dataplane,
+                runtime_state=runtime_state,
+                state_manager=state_manager,
+            )
+            manifest = Manifest(
+                version=1,
+                generated_at="2026-04-23T00:00:00Z",
+                expires_at="2026-04-30T00:00:00Z",
+                features={},
+                transport_policy=TransportPolicy(preferred_order=["https"], retry_budget=1),
+                network_policy=NetworkPolicy(),
+                endpoints=[
+                    Endpoint(
+                        id="https-1",
+                        host="198.51.100.20",
+                        port=443,
+                        transport="https",
+                        region="eu-central",
+                        metadata={},
+                    ),
+                ],
+            )
+
+            connected = orchestrator.connect(manifest)
+            self.assertEqual(connected.state, SessionState.CONNECTED)
+            manifest.endpoints[0].metadata["dataplane_failure"] = "health"
+
+            monitored = orchestrator.monitor_connection(manifest, checks=1, auto_reconnect=False)
+
+            self.assertEqual(monitored.state, SessionState.CONNECTED)
+            self.assertEqual(state_manager.state.session_health_fail_streak, 1)
+            self.assertEqual(
+                state_manager.state.session_health_fail_bucket,
+                "network_down:dataplane_healthcheck_failed",
+            )
+            self.assertTrue(any(event.kind == "session_health_suppressed" for event in telemetry.events))
+
+    def test_monitor_connection_clears_pending_soft_failure_after_recovery(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            runtime_state = RuntimeState(Path(tmp) / "marker.json")
+            telemetry = TelemetryRecorder()
+            state_manager = StateManager(StateStore(Path(tmp) / "state.json"))
+            dataplane = LinuxUserspaceDataPlane(dry_run=True)
+            orchestrator = SessionOrchestrator(
+                default_transport_registry(),
+                ProbeEngine(),
+                network_stack=SimulatedNetworkStack(),
+                telemetry=telemetry,
+                dataplane=dataplane,
+                runtime_state=runtime_state,
+                state_manager=state_manager,
+            )
+            manifest = Manifest(
+                version=1,
+                generated_at="2026-04-23T00:00:00Z",
+                expires_at="2026-04-30T00:00:00Z",
+                features={},
+                transport_policy=TransportPolicy(preferred_order=["https"], retry_budget=1),
+                network_policy=NetworkPolicy(),
+                endpoints=[
+                    Endpoint(
+                        id="https-1",
+                        host="198.51.100.20",
+                        port=443,
+                        transport="https",
+                        region="eu-central",
+                        metadata={},
+                    ),
+                ],
+            )
+
+            connected = orchestrator.connect(manifest)
+            self.assertEqual(connected.state, SessionState.CONNECTED)
+            manifest.endpoints[0].metadata["dataplane_failure"] = "health"
+            orchestrator.monitor_connection(manifest, checks=1, auto_reconnect=False)
+
+            manifest.endpoints[0].metadata.pop("dataplane_failure")
+            recovered = orchestrator.monitor_connection(manifest, checks=1, auto_reconnect=False)
+
+            self.assertEqual(recovered.state, SessionState.CONNECTED)
+            self.assertEqual(state_manager.state.session_health_fail_streak, 0)
+            self.assertEqual(state_manager.transport_soft_fail_streak("https"), 0)
+            self.assertTrue(any(event.kind == "session_health_recovered" for event in telemetry.events))
 
     def test_monitor_connection_auto_reconnects(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

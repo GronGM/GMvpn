@@ -3,7 +3,7 @@ from __future__ import annotations
 import socket
 from dataclasses import dataclass
 
-from vpn_client.models import Endpoint, FailureClass
+from vpn_client.models import Endpoint, FailureClass, FailureReasonCode
 from vpn_client.transport_base import Transport, TransportError
 
 
@@ -22,7 +22,11 @@ class TcpTransport(Transport):
             with socket.create_connection((endpoint.host, endpoint.port), timeout=self.connect_timeout_s):
                 self.connected_endpoint_id = endpoint.id
         except OSError as exc:
-            raise TransportError(FailureClass.TCP_BLOCKED, f"tcp dial failed: {exc}") from exc
+            raise TransportError(
+                FailureClass.TCP_BLOCKED,
+                f"tcp dial failed: {exc}",
+                reason_code=FailureReasonCode.TCP_CONNECT_FAILED,
+            ) from exc
 
     def disconnect(self) -> None:
         self.connected_endpoint_id = None

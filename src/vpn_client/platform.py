@@ -2,13 +2,19 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from vpn_client.models import Endpoint, FailureClass, NetworkPolicy
+from vpn_client.models import Endpoint, FailureClass, FailureReasonCode, NetworkPolicy, default_reason_code_for_failure
 
 
 class NetworkStackError(Exception):
-    def __init__(self, failure_class: FailureClass, detail: str):
+    def __init__(
+        self,
+        failure_class: FailureClass,
+        detail: str,
+        reason_code: FailureReasonCode | None = None,
+    ):
         super().__init__(detail)
         self.failure_class = failure_class
+        self.reason_code = reason_code or default_reason_code_for_failure(failure_class)
         self.detail = detail
 
 
@@ -36,10 +42,18 @@ class SimulatedNetworkStack:
         simulated = str(endpoint.metadata.get("network_stack_failure", ""))
         if simulated == "routes":
             self.kill_switch_active = policy.kill_switch_enabled
-            raise NetworkStackError(FailureClass.NETWORK_DOWN, "route programming failed")
+            raise NetworkStackError(
+                FailureClass.NETWORK_DOWN,
+                "route programming failed",
+                reason_code=FailureReasonCode.ROUTE_PROGRAMMING_FAILED,
+            )
         if simulated == "dns":
             self.kill_switch_active = policy.kill_switch_enabled
-            raise NetworkStackError(FailureClass.DNS_INTERFERENCE, "secure DNS policy could not be applied")
+            raise NetworkStackError(
+                FailureClass.DNS_INTERFERENCE,
+                "secure DNS policy could not be applied",
+                reason_code=FailureReasonCode.SECURE_DNS_POLICY_FAILED,
+            )
 
         self.kill_switch_active = policy.kill_switch_enabled
         self.applied_state = AppliedNetworkState(

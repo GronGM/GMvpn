@@ -192,6 +192,85 @@ This seeds a stale runtime marker for `ru-spb-https-1`, forces startup cleanup, 
 - `startup_recovery.actions`
 - `startup_recovery.simulated_endpoint_id`
 
+## Session Health Policy
+
+Signed manifests can now carry a bounded `features.session_health_policy` block for post-connect monitoring:
+
+```json
+{
+  "session_health_policy": {
+    "default": {
+      "checks": 1,
+      "auto_reconnect": false
+    },
+    "by_client_platform": {
+      "android": {
+        "checks": 2
+      }
+    },
+    "by_transport": {
+      "https": {
+        "auto_reconnect": true
+      }
+    }
+  }
+}
+```
+
+Rules:
+
+- `default` sets the base behavior;
+- `by_client_platform` overrides it for one client target such as `android` or `ios`;
+- `by_transport` overrides it for one transport such as `https` or `wireguard`;
+- `checks` must stay in the bounded range `0..10`;
+- `auto_reconnect` is a boolean.
+
+CLI behavior is tri-state:
+
+- if `--health-checks` is omitted, the client uses the resolved manifest value;
+- if `--auto-reconnect-on-health-failure` or `--no-auto-reconnect-on-health-failure` is omitted, the client uses the resolved manifest value;
+- if either flag is passed locally, that local value wins for the current run.
+
+The CLI prints the resolved values as `session_health_checks` and `session_health_auto_reconnect`.
+
+## Support Bundle Diagnostics
+
+The support bundle now exports the effective monitoring policy and the persistent state used to reason about repeated soft failures:
+
+- `session_health_checks`
+- `session_health_auto_reconnect`
+- `session_health_policy_resolved`
+- `session_health_fail_streak`
+- `session_health_fail_bucket`
+- `transport_soft_fail_streaks`
+- `transport_soft_fail_buckets`
+- `endpoint_health[*].last_failure_class`
+- `endpoint_health[*].last_reason_code`
+
+`transport_soft_fail_buckets` and `session_health_fail_bucket` use the format `failure_class:reason_code`.
+That means the runtime does not keep one shared streak for unrelated symptoms. A repeated `network_down:dataplane_healthcheck_failed` pattern is treated separately from `network_down:dataplane_session_inactive`.
+
+## Reason Codes
+
+Each runtime failure still carries the coarse `failure_class`, but it now also emits a machine-readable `reason_code` so support tooling can distinguish different symptoms inside the same class.
+
+Typical examples:
+
+- `dns_interference:dns_lookup_failed`
+- `tls_interference:tls_handshake_failed`
+- `udp_blocked:udp_filtered`
+- `tcp_blocked:tcp_connect_failed`
+- `network_down:route_programming_failed`
+- `network_down:dataplane_healthcheck_failed`
+- `network_down:dataplane_backend_crashed`
+- `unknown:transport_not_registered`
+
+Operationally, this means:
+
+- a one-off soft health failure no longer degrades the session immediately when persistent state is available;
+- transient recovery clears the pending monitoring streak and emits `session_health_recovered`;
+- a dataplane crash still bypasses soft hysteresis and is escalated immediately.
+
 ## Local Guidance Overrides
 
 You can apply unsigned local incident guidance overrides on top of the signed manifest by passing a JSON file:

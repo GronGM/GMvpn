@@ -10,7 +10,7 @@ from vpn_client.dataplane import (
     DataPlaneSession,
     LinuxUserspaceDataPlane,
 )
-from vpn_client.models import Endpoint, FailureClass
+from vpn_client.models import Endpoint, FailureClass, FailureReasonCode
 
 
 class XrayConfigError(Exception):
@@ -216,7 +216,11 @@ class XrayCoreDataPlane(LinuxUserspaceDataPlane):
     def connect(self, endpoint: Endpoint) -> DataPlaneSession:
         simulated = str(endpoint.metadata.get("dataplane_failure", ""))
         if simulated == "start":
-            raise DataPlaneError(FailureClass.ENDPOINT_DOWN, "xray-core failed to start")
+            raise DataPlaneError(
+                FailureClass.ENDPOINT_DOWN,
+                "xray-core failed to start",
+                reason_code=FailureReasonCode.DATAPLANE_BACKEND_START_FAILED,
+            )
 
         config_path = self.config_dir / f"{endpoint.id}.json"
         config_path.write_text(self.renderer.render_json(endpoint), encoding="utf-8")
@@ -227,7 +231,11 @@ class XrayCoreDataPlane(LinuxUserspaceDataPlane):
             pid = self.supervisor.start(command, dry_run=self.dry_run)
         except Exception as exc:
             self._cleanup_config()
-            raise DataPlaneError(FailureClass.ENDPOINT_DOWN, f"xray-core start failed: {exc}") from exc
+            raise DataPlaneError(
+                FailureClass.ENDPOINT_DOWN,
+                f"xray-core start failed: {exc}",
+                reason_code=FailureReasonCode.DATAPLANE_BACKEND_START_FAILED,
+            ) from exc
 
         self.session = DataPlaneSession(
             backend_name=self.name,

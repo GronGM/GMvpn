@@ -5,7 +5,7 @@ from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
-from vpn_client.models import FailureClass, SessionState
+from vpn_client.models import FailureClass, FailureReasonCode, SessionState, default_reason_code_for_failure
 
 
 @dataclass(slots=True)
@@ -14,6 +14,7 @@ class TelemetryEvent:
     kind: str
     session_state: str
     failure_class: str
+    reason_code: str
     endpoint_id: str | None = None
     transport: str | None = None
     detail: str = ""
@@ -29,6 +30,7 @@ class TelemetryRecorder:
         kind: str,
         session_state: SessionState,
         failure_class: FailureClass = FailureClass.NONE,
+        reason_code: FailureReasonCode | None = None,
         endpoint_id: str | None = None,
         transport: str | None = None,
         detail: str = "",
@@ -38,6 +40,7 @@ class TelemetryRecorder:
             kind=kind,
             session_state=session_state.value,
             failure_class=failure_class.value,
+            reason_code=(reason_code or default_reason_code_for_failure(failure_class)).value,
             endpoint_id=endpoint_id,
             transport=transport,
             detail=detail[:160],

@@ -493,6 +493,45 @@ class SignedManifestLoaderTests(unittest.TestCase):
 
             self.assertIn("non-integer desktop rank", str(ctx.exception))
 
+    def test_loader_accepts_valid_session_health_policy(self) -> None:
+        private_pem, public_pem = generate_keypair()
+        verifier = Ed25519Verifier.from_public_key_pem(public_pem)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            store = ManifestStore(Path(tmp) / "cache")
+            loader = SignedManifestLoader(verifier=verifier, store=store)
+
+            manifest = signed_manifest(private_pem)
+            manifest["features"]["session_health_policy"] = {
+                "default": {"checks": 1, "auto_reconnect": False},
+                "by_client_platform": {"android": {"checks": 2}},
+                "by_transport": {"https": {"auto_reconnect": True}},
+            }
+            manifest["signature"] = sign_payload(private_pem, canonical_manifest_bytes(manifest))
+
+            loaded = loader.load_dict(manifest)
+
+            self.assertIn("session_health_policy", loaded.features)
+
+    def test_loader_rejects_invalid_session_health_policy(self) -> None:
+        private_pem, public_pem = generate_keypair()
+        verifier = Ed25519Verifier.from_public_key_pem(public_pem)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            store = ManifestStore(Path(tmp) / "cache")
+            loader = SignedManifestLoader(verifier=verifier, store=store)
+
+            manifest = signed_manifest(private_pem)
+            manifest["features"]["session_health_policy"] = {
+                "default": {"checks": 99},
+            }
+            manifest["signature"] = sign_payload(private_pem, canonical_manifest_bytes(manifest))
+
+            with self.assertRaises(Exception) as ctx:
+                loader.load_dict(manifest)
+
+            self.assertIn("session_health_policy.default.checks", str(ctx.exception))
+
 
 if __name__ == "__main__":
     unittest.main()
