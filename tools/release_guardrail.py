@@ -203,6 +203,160 @@ def _parse_incident_telemetry_detail(detail: str) -> dict[str, str] | None:
     }
 
 
+def _check_structural_artifact_parity() -> list[str]:
+    failures: list[str] = []
+
+    connected_state = {
+        "endpoint_health": {},
+        "last_connected_endpoint_id": None,
+        "incident_flags": {"disable_transport_https": False},
+        "incident_flag_expires_at": {"disable_transport_https": "2020-01-01T00:00:00+00:00"},
+        "transport_crash_streaks": {},
+        "transport_crash_buckets": {},
+        "transport_crash_reasons": {},
+        "transport_soft_fail_streaks": {},
+        "transport_soft_fail_buckets": {},
+        "transport_reenable_pending": {"https": True},
+        "transport_reenable_not_before": {"https": "2020-01-01T00:00:00+00:00"},
+        "transport_reenable_fail_streaks": {},
+        "session_health_fail_streak": 0,
+        "session_health_fail_bucket": "",
+    }
+    returncode, stdout, bundle = _run_cli_and_collect(
+        "--platform",
+        "simulated",
+        "--dataplane",
+        "null",
+        "--reevaluate-pending-transports",
+        "1",
+        state_payload=connected_state,
+    )
+    if returncode != 0:
+        return [f"structural artifact parity: connected CLI scenario failed with exit code {returncode}"]
+    parsed = _parse_cli_output(stdout)
+    extra = bundle["extra"]
+
+    connected_pairs = (
+        ("endpoint", str(extra["selected_endpoint_id"])),
+        ("transport", str(extra["selected_transport"])),
+    )
+    for key, expected in connected_pairs:
+        actual = parsed.get(key)
+        if actual != expected:
+            failures.append(
+                f"structural artifact parity: CLI field '{key}' was '{actual}', expected '{expected}' from support bundle"
+            )
+
+    cli_reenabled = parsed.get("reenabled_transports")
+    bundle_reenabled = ",".join(extra["reenabled_transports"])
+    if (cli_reenabled or "") != bundle_reenabled:
+        failures.append(
+            "structural artifact parity: CLI field 'reenabled_transports' "
+            f"was '{cli_reenabled}', expected '{bundle_reenabled}' from support bundle"
+        )
+
+    returncode, stdout, bundle = _run_cli_and_collect(
+        "--platform",
+        "simulated",
+        "--dataplane",
+        "null",
+        "--simulate-stale-runtime-endpoint",
+        "ru-spb-https-1",
+    )
+    if returncode != 0:
+        failures.append(f"structural artifact parity: startup-recovery CLI scenario failed with exit code {returncode}")
+        return failures
+    parsed = _parse_cli_output(stdout)
+    extra = bundle["extra"]
+
+    startup_expected = str(
+        bool(extra["startup_recovery"]["stale_marker_found"] and extra["startup_recovery"]["cleanup_enabled"])
+    )
+    if parsed.get("startup_recovered") != startup_expected:
+        failures.append(
+            "structural artifact parity: CLI field 'startup_recovered' "
+            f"was '{parsed.get('startup_recovered')}', expected '{startup_expected}' from support bundle"
+        )
+    simulated_endpoint = str(extra["startup_recovery"]["simulated_endpoint_id"])
+    if parsed.get("simulated_stale_runtime_endpoint") != simulated_endpoint:
+        failures.append(
+            "structural artifact parity: CLI field 'simulated_stale_runtime_endpoint' "
+            f"was '{parsed.get('simulated_stale_runtime_endpoint')}', expected '{simulated_endpoint}' from support bundle"
+        )
+
+    mismatch_manifest = {
+        "version": 1,
+        "generated_at": "2026-04-23T00:00:00Z",
+        "expires_at": "2026-04-30T00:00:00Z",
+        "schema_version": 1,
+        "features": {
+            "support_bundle_enabled": True,
+            "runtime_support_policy": {
+                "default": {"enforce_contract_match": True},
+            },
+        },
+        "platform_capabilities": {
+            "linux": {
+                "platform": "linux",
+                "supported_dataplanes": ["linux-userspace", "routed"],
+                "network_adapter": "linux",
+                "status": "prototype",
+                "notes": "Older contour declaration.",
+            }
+        },
+        "transport_policy": {
+            "preferred_order": ["https"],
+            "connect_timeout_ms": 2500,
+            "retry_budget": 1,
+            "probe_timeout_ms": 1000,
+        },
+        "network_policy": {
+            "tunnel_mode": "full",
+            "dns_mode": "vpn_only",
+            "kill_switch_enabled": True,
+            "ipv6_enabled": False,
+            "allow_lan_while_connected": False,
+        },
+        "endpoints": [
+            {
+                "id": "desktop-1",
+                "host": "198.51.100.50",
+                "port": 443,
+                "transport": "https",
+                "region": "eu-central",
+                "tags": [],
+                "metadata": {
+                    "dataplane": "xray-core",
+                    "xray_protocol": "vless",
+                    "xray_user_id": "11111111-1111-1111-1111-111111111111",
+                    "xray_stream_network": "tcp",
+                    "xray_security": "tls",
+                    "xray_server_name": "cdn.example.net",
+                    "supported_client_platforms": ["linux"],
+                },
+            }
+        ],
+    }
+    returncode, stdout, bundle = _run_custom_cli_and_collect(
+        mismatch_manifest,
+        args=("--platform", "linux", "--client-platform", "linux", "--dataplane", "xray-core"),
+    )
+    if returncode != 2:
+        failures.append(f"structural artifact parity: contract-mismatch CLI scenario returned {returncode}, expected 2")
+        return failures
+    parsed = _parse_cli_output(stdout)
+    extra = bundle["extra"]
+
+    expected_gate_blocked = str(bool(extra["runtime_support_policy_resolved"]["gate_blocked"])).lower()
+    if parsed.get("runtime_support_gate_blocked") != expected_gate_blocked:
+        failures.append(
+            "structural artifact parity: CLI field 'runtime_support_gate_blocked' "
+            f"was '{parsed.get('runtime_support_gate_blocked')}', expected '{expected_gate_blocked}' from support bundle"
+        )
+
+    return failures
+
+
 def _check_release_artifact_policy() -> list[str]:
     failures: list[str] = []
 
@@ -636,6 +790,7 @@ def main() -> int:
         failures.extend(_check_linux_xray_smoke_gate())
         failures.extend(_check_release_artifact_policy())
         failures.extend(_check_incident_narrative_consistency())
+        failures.extend(_check_structural_artifact_parity())
         if args.run_local_checks:
             failures.extend(_run_local_checks())
 
@@ -652,6 +807,7 @@ def main() -> int:
     print("- linux+xray MVP contour smoke gate passed")
     print("- CLI and support bundle stay aligned on release-facing policy and incident facts")
     print("- incident narrative stays aligned across CLI, telemetry, and support bundle")
+    print("- structural run facts stay aligned across CLI and support bundle")
     if args.run_local_checks:
         print("- local compileall and unittest checks passed")
     return 0
