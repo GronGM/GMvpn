@@ -20,14 +20,14 @@ def signed_manifest(private_pem: bytes) -> dict:
                 "supported_dataplanes": ["linux-userspace", "routed"],
                 "network_adapter": "linux",
                 "startup_reconciliation": True,
-                "status": "prototype",
+                "status": "mvp-supported",
                 "notes": "Linux dry-run adapter.",
             },
             "ios": {
                 "platform": "ios",
                 "supported_dataplanes": ["ios-bridge", "routed"],
                 "network_adapter": "ios",
-                "status": "planned",
+                "status": "bridge-only",
                 "notes": "Future Network Extension path.",
             },
         },
@@ -418,6 +418,23 @@ class SignedManifestLoaderTests(unittest.TestCase):
                 loader.load_dict(manifest)
 
             self.assertIn("unsupported dataplane", str(ctx.exception))
+
+    def test_loader_rejects_invalid_platform_capability_status(self) -> None:
+        private_pem, public_pem = generate_keypair()
+        verifier = Ed25519Verifier.from_public_key_pem(public_pem)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            store = ManifestStore(Path(tmp) / "cache")
+            loader = SignedManifestLoader(verifier=verifier, store=store)
+
+            manifest = signed_manifest(private_pem)
+            manifest["platform_capabilities"]["linux"]["status"] = "ga-soon"
+            manifest["signature"] = sign_payload(private_pem, canonical_manifest_bytes(manifest))
+
+            with self.assertRaises(Exception) as ctx:
+                loader.load_dict(manifest)
+
+            self.assertIn("unsupported status", str(ctx.exception))
 
     def test_loader_rejects_invalid_endpoint_supported_client_platforms(self) -> None:
         private_pem, public_pem = generate_keypair()
