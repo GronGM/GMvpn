@@ -533,6 +533,8 @@ class SessionOrchestrator:
                 f"{incident_summary['severity']}: {incident_summary['headline']}; "
                 f"{incident_summary['recommended_action']}"
             ),
+            incident_severity=incident_summary["severity"],
+            primary_transport_issue=incident_summary["primary_transport_issue"],
         )
 
     def _degrade_current_session(

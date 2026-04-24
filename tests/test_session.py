@@ -632,6 +632,8 @@ class SessionOrchestratorTests(unittest.TestCase):
             self.assertEqual(summary["failure_class"], "tls_interference")
             self.assertEqual(summary["severity"], "warning")
             self.assertEqual(telemetry.events[-1].kind, "incident_summary")
+            self.assertEqual(telemetry.events[-1].incident_severity, "warning")
+            self.assertIsNone(telemetry.events[-1].primary_transport_issue)
 
     def test_failed_connect_keeps_last_attempt_context_for_incident_visibility(self) -> None:
         telemetry = TelemetryRecorder()

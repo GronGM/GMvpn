@@ -19,6 +19,14 @@ class TelemetryRecorderTests(unittest.TestCase):
             SessionState.DEGRADED,
             FailureClass.TLS_INTERFERENCE,
             reason_code=FailureReasonCode.TLS_HANDSHAKE_FAILED,
+            incident_severity="warning",
+            primary_transport_issue={
+                "transport": "quic",
+                "disabled": False,
+                "pending_reenable": False,
+                "crash_bucket": None,
+                "soft_fail_bucket": "unknown:tls_handshake_failed",
+            },
         )
 
         with tempfile.TemporaryDirectory() as tmp:
@@ -29,6 +37,8 @@ class TelemetryRecorderTests(unittest.TestCase):
         self.assertEqual(payload["events"][0]["kind"], "b")
         self.assertEqual(payload["events"][1]["failure_class"], "tls_interference")
         self.assertEqual(payload["events"][1]["reason_code"], "tls_handshake_failed")
+        self.assertEqual(payload["events"][1]["incident_severity"], "warning")
+        self.assertEqual(payload["events"][1]["primary_transport_issue"]["transport"], "quic")
         self.assertEqual(payload["extra"]["version"], 1)
 
 
