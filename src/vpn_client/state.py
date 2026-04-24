@@ -26,6 +26,7 @@ class PersistentState:
     incident_flags: dict[str, bool] = field(default_factory=dict)
     incident_flag_expires_at: dict[str, str] = field(default_factory=dict)
     transport_crash_streaks: dict[str, int] = field(default_factory=dict)
+    transport_crash_buckets: dict[str, str] = field(default_factory=dict)
     transport_crash_reasons: dict[str, str] = field(default_factory=dict)
     transport_soft_fail_streaks: dict[str, int] = field(default_factory=dict)
     transport_soft_fail_buckets: dict[str, str] = field(default_factory=dict)
@@ -56,6 +57,7 @@ class StateStore:
             incident_flags=payload.get("incident_flags", {}),
             incident_flag_expires_at=payload.get("incident_flag_expires_at", {}),
             transport_crash_streaks=payload.get("transport_crash_streaks", {}),
+            transport_crash_buckets=payload.get("transport_crash_buckets", {}),
             transport_crash_reasons=payload.get("transport_crash_reasons", {}),
             transport_soft_fail_streaks=payload.get("transport_soft_fail_streaks", {}),
             transport_soft_fail_buckets=payload.get("transport_soft_fail_buckets", {}),
@@ -76,6 +78,7 @@ class StateStore:
             "incident_flags": state.incident_flags,
             "incident_flag_expires_at": state.incident_flag_expires_at,
             "transport_crash_streaks": state.transport_crash_streaks,
+            "transport_crash_buckets": state.transport_crash_buckets,
             "transport_crash_reasons": state.transport_crash_reasons,
             "transport_soft_fail_streaks": state.transport_soft_fail_streaks,
             "transport_soft_fail_buckets": state.transport_soft_fail_buckets,
@@ -134,6 +137,7 @@ class StateManager:
 
     def clear_transport_crash_streak(self, transport: str) -> None:
         self.state.transport_crash_streaks[transport] = 0
+        self.state.transport_crash_buckets.pop(transport, None)
         self.state.transport_soft_fail_streaks[transport] = 0
         self.state.transport_soft_fail_buckets.pop(transport, None)
         self.state.transport_reenable_pending[transport] = False
@@ -272,9 +276,20 @@ class StateManager:
         remaining = self._parse_timestamp(health.cooldown_until) - current_time
         return max(int(remaining.total_seconds()), 0)
 
-    def record_transport_crash(self, transport: str, detail: str, threshold: int = 2, disable_ttl_seconds: int = 900) -> bool:
+    def record_transport_crash(
+        self,
+        transport: str,
+        detail: str,
+        reason_code: FailureReasonCode = FailureReasonCode.UNKNOWN,
+        threshold: int = 2,
+        disable_ttl_seconds: int = 900,
+    ) -> bool:
+        bucket = reason_code.value
         streak = self.state.transport_crash_streaks.get(transport, 0) + 1
+        if self.state.transport_crash_buckets.get(transport) != bucket:
+            streak = 1
         self.state.transport_crash_streaks[transport] = streak
+        self.state.transport_crash_buckets[transport] = bucket
         if detail:
             self.state.transport_crash_reasons[transport] = detail[:160]
         disabled = streak >= threshold

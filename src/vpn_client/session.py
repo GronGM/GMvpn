@@ -276,6 +276,10 @@ class SessionOrchestrator:
             except DataPlaneError as exc:
                 disabled_transport = False
                 runtime_snapshot = self.dataplane.runtime_snapshot()
+                failure_policy = self.policy_engine.resolve_transport_failure_policy(
+                    manifest,
+                    transport=endpoint.transport,
+                )
                 self._cleanup_after_failed_attempt(transport, disconnect_network_stack=True)
                 if self.state_manager:
                     self.state_manager.mark_failure_with_reason(
@@ -288,14 +292,17 @@ class SessionOrchestrator:
                         disabled_transport = self.state_manager.record_transport_crash(
                             endpoint.transport,
                             runtime_snapshot.get("crash_reason") or exc.detail,
-                            threshold=1,
+                            reason_code=exc.reason_code,
+                            threshold=failure_policy.crash_threshold,
+                            disable_ttl_seconds=failure_policy.crash_disable_ttl_seconds,
                         )
                     else:
                         disabled_transport = self.state_manager.record_transport_soft_failure(
                             endpoint.transport,
                             exc.failure_class,
                             exc.reason_code,
-                            threshold=3,
+                            threshold=failure_policy.soft_fail_threshold,
+                            disable_ttl_seconds=failure_policy.soft_fail_disable_ttl_seconds,
                         )
                     if scheduled.pending_reenable and not disabled_transport:
                         self.state_manager.mark_transport_reenable_pending(endpoint.transport, False)
@@ -612,6 +619,10 @@ class SessionOrchestrator:
             confirmed_failure = False
             disabled_transport = False
             runtime_snapshot = self.dataplane.runtime_snapshot()
+            failure_policy = self.policy_engine.resolve_transport_failure_policy(
+                manifest,
+                transport=endpoint.transport,
+            )
             self.state_manager.mark_failure_with_reason(
                 endpoint.id,
                 report.failure_class,
@@ -623,7 +634,9 @@ class SessionOrchestrator:
                 disabled_transport = self.state_manager.record_transport_crash(
                     endpoint.transport,
                     runtime_snapshot.get("crash_reason") or report.detail,
-                    threshold=1,
+                    reason_code=report.reason_code,
+                    threshold=failure_policy.crash_threshold,
+                    disable_ttl_seconds=failure_policy.crash_disable_ttl_seconds,
                 )
                 confirmed_failure = True
             else:
@@ -631,7 +644,8 @@ class SessionOrchestrator:
                     endpoint.transport,
                     report.failure_class,
                     report.reason_code,
-                    threshold=3,
+                    threshold=failure_policy.soft_fail_threshold,
+                    disable_ttl_seconds=failure_policy.soft_fail_disable_ttl_seconds,
                 )
                 confirmed_failure = self.state_manager.record_session_health_failure(
                     report.failure_class,

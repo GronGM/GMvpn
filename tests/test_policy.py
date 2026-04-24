@@ -4,7 +4,11 @@ import unittest
 
 from vpn_client.models import DnsMode, FailureClass, Manifest, NetworkPolicy, TransportPolicy, TunnelMode
 from vpn_client.client_platform import ClientPlatform
-from vpn_client.policy import PolicyEngine, validate_transport_reenable_policy
+from vpn_client.policy import (
+    PolicyEngine,
+    validate_transport_failure_policy,
+    validate_transport_reenable_policy,
+)
 from vpn_client.state import StateManager, StateStore
 
 import tempfile
@@ -192,6 +196,55 @@ class PolicyEngineTests(unittest.TestCase):
                     "default": {
                         "retry_delay_seconds": 30,
                         "max_retry_delay_seconds": 1800,
+                    }
+                }
+            )
+
+    def test_policy_engine_resolves_transport_failure_policy_by_transport(self) -> None:
+        manifest = Manifest(
+            version=1,
+            generated_at="2026-04-23T00:00:00Z",
+            expires_at="2026-04-30T00:00:00Z",
+            endpoints=[],
+            transport_policy=TransportPolicy(preferred_order=["https"]),
+            network_policy=NetworkPolicy(),
+            features={
+                "transport_failure_policy": {
+                    "default": {
+                        "crash_threshold": 2,
+                        "soft_fail_threshold": 4,
+                        "crash_disable_ttl_seconds": 1200,
+                        "soft_fail_disable_ttl_seconds": 600,
+                    },
+                    "by_transport": {
+                        "wireguard": {
+                            "crash_threshold": 1,
+                            "soft_fail_threshold": 2,
+                            "crash_disable_ttl_seconds": 1800,
+                            "soft_fail_disable_ttl_seconds": 300,
+                        }
+                    },
+                }
+            },
+        )
+
+        default_resolved = PolicyEngine().resolve_transport_failure_policy(manifest, transport="https")
+        wireguard_resolved = PolicyEngine().resolve_transport_failure_policy(manifest, transport="wireguard")
+
+        self.assertEqual(default_resolved.crash_threshold, 2)
+        self.assertEqual(default_resolved.soft_fail_threshold, 4)
+        self.assertEqual(default_resolved.crash_disable_ttl_seconds, 1200)
+        self.assertEqual(default_resolved.soft_fail_disable_ttl_seconds, 600)
+        self.assertEqual(wireguard_resolved.crash_threshold, 1)
+        self.assertEqual(wireguard_resolved.soft_fail_threshold, 2)
+
+    def test_validate_transport_failure_policy_rejects_invalid_bounds(self) -> None:
+        with self.assertRaises(ValueError):
+            validate_transport_failure_policy(
+                {
+                    "default": {
+                        "crash_threshold": 0,
+                        "soft_fail_threshold": 3,
                     }
                 }
             )

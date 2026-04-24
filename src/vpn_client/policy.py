@@ -25,6 +25,14 @@ class TransportReenablePolicy:
     max_retry_delay_seconds: int = 1800
 
 
+@dataclass(slots=True)
+class TransportFailurePolicy:
+    crash_threshold: int = 1
+    soft_fail_threshold: int = 3
+    crash_disable_ttl_seconds: int = 900
+    soft_fail_disable_ttl_seconds: int = 300
+
+
 def validate_incident_guidance_overrides(overrides: object) -> None:
     if not isinstance(overrides, dict):
         raise ValueError("incident_guidance_overrides must be an object")
@@ -113,6 +121,34 @@ def validate_transport_reenable_policy(policy: object) -> None:
             )
 
 
+def validate_transport_failure_policy(policy: object) -> None:
+    if not isinstance(policy, dict):
+        raise ValueError("transport_failure_policy must be an object")
+
+    allowed_keys = {"default", "by_transport"}
+    unexpected = set(policy) - allowed_keys
+    if unexpected:
+        raise ValueError(f"transport_failure_policy contains unsupported keys: {', '.join(sorted(unexpected))}")
+
+    if "default" in policy:
+        _validate_transport_failure_policy_override(
+            policy["default"],
+            context="transport_failure_policy.default",
+        )
+
+    by_transport = policy.get("by_transport")
+    if by_transport is not None:
+        if not isinstance(by_transport, dict):
+            raise ValueError("transport_failure_policy.by_transport must be an object")
+        for transport_name, override in by_transport.items():
+            if not isinstance(transport_name, str) or not transport_name:
+                raise ValueError("transport_failure_policy.by_transport keys must be non-empty strings")
+            _validate_transport_failure_policy_override(
+                override,
+                context=f"transport_failure_policy.by_transport.{transport_name}",
+            )
+
+
 def _validate_session_health_policy_override(override: object, context: str) -> None:
     if not isinstance(override, dict):
         raise ValueError(f"{context} must be an object")
@@ -164,6 +200,57 @@ def _validate_transport_reenable_policy_override(override: object, context: str)
         and max_retry_delay_seconds < retry_delay_seconds
     ):
         raise ValueError(f"{context}.max_retry_delay_seconds must be greater than or equal to retry_delay_seconds")
+
+
+def _validate_transport_failure_policy_override(override: object, context: str) -> None:
+    if not isinstance(override, dict):
+        raise ValueError(f"{context} must be an object")
+
+    allowed_keys = {
+        "crash_threshold",
+        "soft_fail_threshold",
+        "crash_disable_ttl_seconds",
+        "soft_fail_disable_ttl_seconds",
+    }
+    unexpected = set(override) - allowed_keys
+    if unexpected:
+        raise ValueError(f"{context} contains unsupported keys: {', '.join(sorted(unexpected))}")
+
+    crash_threshold = override.get("crash_threshold")
+    if crash_threshold is not None and (
+        not isinstance(crash_threshold, int)
+        or isinstance(crash_threshold, bool)
+        or crash_threshold < 1
+        or crash_threshold > 5
+    ):
+        raise ValueError(f"{context}.crash_threshold must be an integer between 1 and 5")
+
+    soft_fail_threshold = override.get("soft_fail_threshold")
+    if soft_fail_threshold is not None and (
+        not isinstance(soft_fail_threshold, int)
+        or isinstance(soft_fail_threshold, bool)
+        or soft_fail_threshold < 1
+        or soft_fail_threshold > 5
+    ):
+        raise ValueError(f"{context}.soft_fail_threshold must be an integer between 1 and 5")
+
+    crash_disable_ttl_seconds = override.get("crash_disable_ttl_seconds")
+    if crash_disable_ttl_seconds is not None and (
+        not isinstance(crash_disable_ttl_seconds, int)
+        or isinstance(crash_disable_ttl_seconds, bool)
+        or crash_disable_ttl_seconds < 60
+        or crash_disable_ttl_seconds > 3600
+    ):
+        raise ValueError(f"{context}.crash_disable_ttl_seconds must be an integer between 60 and 3600")
+
+    soft_fail_disable_ttl_seconds = override.get("soft_fail_disable_ttl_seconds")
+    if soft_fail_disable_ttl_seconds is not None and (
+        not isinstance(soft_fail_disable_ttl_seconds, int)
+        or isinstance(soft_fail_disable_ttl_seconds, bool)
+        or soft_fail_disable_ttl_seconds < 60
+        or soft_fail_disable_ttl_seconds > 1800
+    ):
+        raise ValueError(f"{context}.soft_fail_disable_ttl_seconds must be an integer between 60 and 1800")
 
 
 class PolicyEngine:
@@ -240,6 +327,24 @@ class PolicyEngine:
         resolved = _merge_transport_reenable_policy(resolved, raw_policy.get("default"))
         if transport is not None:
             resolved = _merge_transport_reenable_policy(
+                resolved,
+                raw_policy.get("by_transport", {}).get(transport),
+            )
+        return resolved
+
+    def resolve_transport_failure_policy(
+        self,
+        manifest: Manifest,
+        transport: str | None = None,
+    ) -> TransportFailurePolicy:
+        resolved = TransportFailurePolicy()
+        raw_policy = manifest.features.get("transport_failure_policy")
+        if not isinstance(raw_policy, dict):
+            return resolved
+
+        resolved = _merge_transport_failure_policy(resolved, raw_policy.get("default"))
+        if transport is not None:
+            resolved = _merge_transport_failure_policy(
                 resolved,
                 raw_policy.get("by_transport", {}).get(transport),
             )
@@ -334,4 +439,20 @@ def _merge_transport_reenable_policy(base: TransportReenablePolicy, override: ob
         merged = replace(merged, retry_delay_seconds=override["retry_delay_seconds"])
     if "max_retry_delay_seconds" in override:
         merged = replace(merged, max_retry_delay_seconds=override["max_retry_delay_seconds"])
+    return merged
+
+
+def _merge_transport_failure_policy(base: TransportFailurePolicy, override: object) -> TransportFailurePolicy:
+    if not isinstance(override, dict):
+        return base
+
+    merged = base
+    if "crash_threshold" in override:
+        merged = replace(merged, crash_threshold=override["crash_threshold"])
+    if "soft_fail_threshold" in override:
+        merged = replace(merged, soft_fail_threshold=override["soft_fail_threshold"])
+    if "crash_disable_ttl_seconds" in override:
+        merged = replace(merged, crash_disable_ttl_seconds=override["crash_disable_ttl_seconds"])
+    if "soft_fail_disable_ttl_seconds" in override:
+        merged = replace(merged, soft_fail_disable_ttl_seconds=override["soft_fail_disable_ttl_seconds"])
     return merged

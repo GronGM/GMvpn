@@ -296,6 +296,15 @@ def main() -> int:
         )
         for transport_name in sorted({endpoint.transport for endpoint in manifest.endpoints})
     }
+    resolved_transport_failure_policy = {
+        transport_name: asdict(
+            orchestrator.policy_engine.resolve_transport_failure_policy(
+                manifest,
+                transport=transport_name,
+            )
+        )
+        for transport_name in sorted({endpoint.transport for endpoint in manifest.endpoints})
+    }
     effective_health_checks = (
         args.health_checks if args.health_checks is not None else effective_session_health_policy.checks
     )
@@ -473,11 +482,13 @@ def main() -> int:
                     "auto_reconnect": effective_auto_reconnect,
                 },
                 "transport_reenable_policy_resolved": resolved_transport_reenable_policy,
+                "transport_failure_policy_resolved": resolved_transport_failure_policy,
                 "incident_flags": state_manager.state.incident_flags,
                 "incident_flag_expires_at": state_manager.state.incident_flag_expires_at,
                 "transport_recovery": {
                     transport: {
                         "crash_streak": state_manager.state.transport_crash_streaks.get(transport, 0),
+                        "crash_bucket": state_manager.state.transport_crash_buckets.get(transport),
                         "crash_reason": state_manager.state.transport_crash_reasons.get(transport),
                         "soft_fail_streak": state_manager.state.transport_soft_fail_streaks.get(transport, 0),
                         "soft_fail_bucket": state_manager.state.transport_soft_fail_buckets.get(transport),
@@ -490,6 +501,7 @@ def main() -> int:
                     for transport in sorted(
                         {
                             *state_manager.state.transport_crash_streaks.keys(),
+                            *state_manager.state.transport_crash_buckets.keys(),
                             *state_manager.state.transport_crash_reasons.keys(),
                             *state_manager.state.transport_soft_fail_streaks.keys(),
                             *state_manager.state.transport_soft_fail_buckets.keys(),
@@ -500,6 +512,7 @@ def main() -> int:
                     )
                 },
                 "transport_crash_streaks": state_manager.state.transport_crash_streaks,
+                "transport_crash_buckets": state_manager.state.transport_crash_buckets,
                 "transport_crash_reasons": state_manager.state.transport_crash_reasons,
                 "transport_soft_fail_streaks": state_manager.state.transport_soft_fail_streaks,
                 "transport_soft_fail_buckets": state_manager.state.transport_soft_fail_buckets,

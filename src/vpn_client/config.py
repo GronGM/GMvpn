@@ -30,6 +30,7 @@ from vpn_client.models import (
 from vpn_client.policy import (
     validate_incident_guidance_overrides,
     validate_session_health_policy,
+    validate_transport_failure_policy,
     validate_transport_reenable_policy,
 )
 from vpn_client.security import Ed25519Verifier
@@ -120,6 +121,12 @@ def validate_manifest(manifest: Manifest) -> None:
     if transport_reenable_policy is not None:
         try:
             validate_transport_reenable_policy(transport_reenable_policy)
+        except ValueError as exc:
+            raise ManifestError(str(exc)) from exc
+    transport_failure_policy = manifest.features.get("transport_failure_policy")
+    if transport_failure_policy is not None:
+        try:
+            validate_transport_failure_policy(transport_failure_policy)
         except ValueError as exc:
             raise ManifestError(str(exc)) from exc
     _validate_provider_profile_contract(manifest)
