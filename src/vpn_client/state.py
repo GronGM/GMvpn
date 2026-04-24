@@ -196,6 +196,16 @@ class StateManager:
         self.state.endpoint_health[endpoint_id] = health
         self.store.save(self.state)
 
+    def apply_failure_mitigation(self, failure_class: FailureClass, transport: str | None = None) -> list[str]:
+        actions: list[str] = []
+        if failure_class is FailureClass.DNS_INTERFERENCE:
+            self.set_incident_flag_with_ttl("force_system_dns_fallback", True, ttl_seconds=300)
+            actions.append("force_system_dns_fallback")
+        if failure_class is FailureClass.UDP_BLOCKED and transport:
+            self.set_incident_flag_with_ttl(f"disable_transport_{transport}", True, ttl_seconds=180)
+            actions.append(f"disable_transport_{transport}")
+        return actions
+
     def mark_stale_runtime(
         self,
         endpoint_id: str,

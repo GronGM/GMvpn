@@ -107,6 +107,7 @@ class SessionOrchestrator:
                 )
             probe = self.probe_engine.probe(endpoint)
             if not probe.reachable:
+                mitigation_actions: list[str] = []
                 if self.state_manager and scheduled.pending_reenable:
                     self.state_manager.mark_transport_reenable_pending(endpoint.transport, False)
                     self.state_manager.set_incident_flag_with_ttl(
@@ -116,13 +117,21 @@ class SessionOrchestrator:
                     )
                 if self.state_manager:
                     self.state_manager.mark_failure(endpoint.id, probe.failure_class, probe.detail)
+                    mitigation_actions = self.state_manager.apply_failure_mitigation(
+                        probe.failure_class,
+                        transport=endpoint.transport,
+                    )
                 self.telemetry.record(
                     "probe_failed",
                     self.state,
                     probe.failure_class,
                     endpoint_id=endpoint.id,
                     transport=endpoint.transport,
-                    detail=probe.detail,
+                    detail=(
+                        f"{probe.detail}; mitigations={','.join(mitigation_actions)}"
+                        if mitigation_actions
+                        else probe.detail
+                    ),
                 )
                 attempts.append(
                     ConnectionAttempt(
@@ -130,11 +139,19 @@ class SessionOrchestrator:
                         transport=endpoint.transport,
                         success=False,
                         failure_class=probe.failure_class,
-                        detail=probe.detail,
+                        detail=(
+                            f"{probe.detail}; mitigations={','.join(mitigation_actions)}"
+                            if mitigation_actions
+                            else probe.detail
+                        ),
                     )
                 )
                 last_failure = probe.failure_class
-                last_detail = probe.detail
+                last_detail = (
+                    f"{probe.detail}; mitigations={','.join(mitigation_actions)}"
+                    if mitigation_actions
+                    else probe.detail
+                )
                 continue
 
             transport = self.transports.get(endpoint.transport)

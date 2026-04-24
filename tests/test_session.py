@@ -179,6 +179,85 @@ class SessionOrchestratorTests(unittest.TestCase):
 
             self.assertEqual(report.selected_endpoint_id, "https-2")
 
+    def test_udp_blocked_probe_temporarily_disables_transport_and_fails_over(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            state_manager = StateManager(StateStore(Path(tmp) / "state.json"))
+            manifest = Manifest(
+                version=1,
+                generated_at="2026-04-23T00:00:00Z",
+                expires_at="2026-04-30T00:00:00Z",
+                features={},
+                transport_policy=TransportPolicy(preferred_order=["wireguard", "https"], retry_budget=2),
+                network_policy=NetworkPolicy(),
+                endpoints=[
+                    Endpoint(
+                        id="wg-1",
+                        host="198.51.100.10",
+                        port=51820,
+                        transport="wireguard",
+                        region="eu-central",
+                        metadata={"simulated_failure": "udp"},
+                    ),
+                    Endpoint(
+                        id="https-1",
+                        host="198.51.100.20",
+                        port=443,
+                        transport="https",
+                        region="eu-central",
+                        metadata={},
+                    ),
+                ],
+            )
+
+            orchestrator = SessionOrchestrator(
+                default_transport_registry(),
+                ProbeEngine(),
+                policy_engine=PolicyEngine(state_manager=state_manager),
+                network_stack=SimulatedNetworkStack(),
+                telemetry=TelemetryRecorder(),
+                state_manager=state_manager,
+            )
+            report = orchestrator.connect(manifest)
+
+            self.assertEqual(report.state, SessionState.CONNECTED)
+            self.assertEqual(report.selected_endpoint_id, "https-1")
+            self.assertTrue(state_manager.incident_flag("disable_transport_wireguard"))
+
+    def test_dns_interference_probe_enables_temporary_system_dns_fallback(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            state_manager = StateManager(StateStore(Path(tmp) / "state.json"))
+            manifest = Manifest(
+                version=1,
+                generated_at="2026-04-23T00:00:00Z",
+                expires_at="2026-04-30T00:00:00Z",
+                features={},
+                transport_policy=TransportPolicy(preferred_order=["https"], retry_budget=1),
+                network_policy=NetworkPolicy(dns_mode=DnsMode.VPN_ONLY),
+                endpoints=[
+                    Endpoint(
+                        id="https-1",
+                        host="198.51.100.20",
+                        port=443,
+                        transport="https",
+                        region="eu-central",
+                        metadata={"simulated_failure": "dns"},
+                    ),
+                ],
+            )
+
+            orchestrator = SessionOrchestrator(
+                default_transport_registry(),
+                ProbeEngine(),
+                policy_engine=PolicyEngine(state_manager=state_manager),
+                network_stack=SimulatedNetworkStack(),
+                telemetry=TelemetryRecorder(),
+                state_manager=state_manager,
+            )
+            report = orchestrator.connect(manifest)
+
+            self.assertEqual(report.state, SessionState.DEGRADED)
+            self.assertTrue(state_manager.incident_flag("force_system_dns_fallback"))
+
     def test_scheduler_respects_retry_budget(self) -> None:
         manifest = Manifest(
             version=1,

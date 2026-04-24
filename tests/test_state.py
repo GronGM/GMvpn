@@ -83,6 +83,24 @@ class StateManagerTests(unittest.TestCase):
             self.assertEqual(manager.transport_crash_streak("https"), 0)
             self.assertEqual(manager.transport_crash_reason("https"), "userspace backend crashed")
 
+    def test_dns_interference_enables_temporary_system_dns_fallback(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            manager = StateManager(StateStore(Path(tmp) / "state.json"))
+
+            actions = manager.apply_failure_mitigation(FailureClass.DNS_INTERFERENCE)
+
+            self.assertEqual(actions, ["force_system_dns_fallback"])
+            self.assertTrue(manager.incident_flag("force_system_dns_fallback"))
+
+    def test_udp_blocked_temporarily_disables_transport(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            manager = StateManager(StateStore(Path(tmp) / "state.json"))
+
+            actions = manager.apply_failure_mitigation(FailureClass.UDP_BLOCKED, transport="wireguard")
+
+            self.assertEqual(actions, ["disable_transport_wireguard"])
+            self.assertTrue(manager.incident_flag("disable_transport_wireguard"))
+
 
 if __name__ == "__main__":
     unittest.main()
