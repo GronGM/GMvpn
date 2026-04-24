@@ -18,6 +18,25 @@ class _RecoveryReportLike(Protocol):
     stale_marker_found: bool
 
 
+MITIGATION_FLAG_NAMES = {"force_system_dns_fallback"}
+MITIGATION_FLAG_PREFIXES = ("disable_transport_",)
+
+
+def _active_incident_flags(state_manager: StateManager) -> list[str]:
+    return sorted(
+        name
+        for name in state_manager.state.incident_flags
+        if state_manager.incident_flag(name)
+    )
+
+
+def _is_mitigation_flag(name: str) -> bool:
+    return name in MITIGATION_FLAG_NAMES or any(
+        name.startswith(prefix)
+        for prefix in MITIGATION_FLAG_PREFIXES
+    )
+
+
 def build_incident_summary(
     state_manager: StateManager,
     report: _ReportLike,
@@ -27,11 +46,22 @@ def build_incident_summary(
     manifest: Manifest | None = None,
     policy_engine: PolicyEngine | None = None,
 ) -> dict[str, object]:
+    active_incident_flags = _active_incident_flags(state_manager)
     active_disable_flags = sorted(
         name
-        for name, enabled in state_manager.state.incident_flags.items()
-        if enabled and name.startswith("disable_transport_")
+        for name in active_incident_flags
+        if name.startswith("disable_transport_")
     )
+    active_mitigation_flags = sorted(
+        name
+        for name in active_incident_flags
+        if _is_mitigation_flag(name)
+    )
+    mitigation_flag_expires_at = {
+        name: state_manager.state.incident_flag_expires_at.get(name)
+        for name in active_mitigation_flags
+        if name in state_manager.state.incident_flag_expires_at
+    }
     cooling_down_endpoints = sorted(
         endpoint_id
         for endpoint_id in state_manager.state.endpoint_health
@@ -73,6 +103,10 @@ def build_incident_summary(
         headline = "one or more transports are locally disabled"
         severity = "warning"
         recommended_action = "Inspect the disabled transport state before re-enabling it on affected clients."
+    elif active_mitigation_flags:
+        headline = "one or more local failure mitigations are active"
+        severity = "warning"
+        recommended_action = "Review active mitigation flags and confirm they expire after the affected network condition clears."
     elif cooling_down_endpoints:
         headline = "one or more endpoints are cooling down after recent failures"
         severity = "info"
@@ -96,7 +130,10 @@ def build_incident_summary(
         "simulated_stale_runtime_endpoint_id": simulated_stale_runtime_endpoint_id,
         "selected_endpoint_id": report.selected_endpoint_id,
         "selected_transport": report.selected_transport,
+        "active_incident_flags": active_incident_flags,
         "active_disable_flags": active_disable_flags,
+        "active_mitigation_flags": active_mitigation_flags,
+        "mitigation_flag_expires_at": mitigation_flag_expires_at,
         "cooling_down_endpoints": cooling_down_endpoints,
         "reenable_pending_transports": reenable_pending_transports,
         "last_crash_transport": last_crash_transport,
