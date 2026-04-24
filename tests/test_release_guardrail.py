@@ -29,6 +29,74 @@ class ReleaseGuardrailTests(unittest.TestCase):
 
         self.assertEqual(failures, ["checklist.md is missing: gamma"])
 
+    def test_linux_xray_smoke_gate_passes_for_repo_demo_manifest(self) -> None:
+        failures = release_guardrail._check_linux_xray_smoke_gate()
+        self.assertEqual(failures, [])
+
+    def test_linux_xray_smoke_gate_reports_runtime_support_regression(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            examples = root / "examples"
+            examples.mkdir(parents=True, exist_ok=True)
+            sample = examples / "demo_manifest.json"
+            sample.write_text(
+                """
+                {
+                  "platform_capabilities": {
+                    "linux": {
+                      "platform": "linux",
+                      "supported_dataplanes": ["xray-core"],
+                      "network_adapter": "linux",
+                      "startup_reconciliation": true,
+                      "status": "prototype"
+                    }
+                  },
+                  "network_policy": {
+                    "tunnel_mode": "full",
+                    "dns_mode": "vpn_only",
+                    "kill_switch_enabled": true,
+                    "ipv6_enabled": false,
+                    "allow_lan_while_connected": false
+                  },
+                  "endpoints": [
+                    {
+                      "id": "edge-1",
+                      "host": "198.51.100.20",
+                      "port": 443,
+                      "transport": "https",
+                      "region": "eu-central",
+                      "metadata": {
+                        "dataplane": "xray-core",
+                        "xray_protocol": "vless",
+                        "xray_user_id": "11111111-1111-1111-1111-111111111111",
+                        "xray_stream_network": "tcp",
+                        "xray_security": "tls",
+                        "xray_server_name": "cdn.example.net"
+                      }
+                    }
+                  ]
+                }
+                """,
+                encoding="utf-8",
+            )
+
+            original_root = release_guardrail.ROOT
+            original_demo_manifest = release_guardrail.DEMO_MANIFEST
+            try:
+                release_guardrail.ROOT = root
+                release_guardrail.DEMO_MANIFEST = sample
+                failures = release_guardrail._check_linux_xray_smoke_gate()
+            finally:
+                release_guardrail.ROOT = original_root
+                release_guardrail.DEMO_MANIFEST = original_demo_manifest
+
+        self.assertEqual(
+            failures,
+            [
+                "linux+xray smoke gate: runtime support no longer assesses linux + xray-core + linux adapter as mvp-supported"
+            ],
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
