@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from types import SimpleNamespace
 
+from vpn_client.client_platform import ClientPlatform
 from vpn_client.dataplane import DataPlaneBackend, DataPlaneError, NullDataPlane
 from vpn_client.health import HealthPolicy, SessionHealthMonitor
 from vpn_client.incident import build_incident_summary
 from vpn_client.models import ConnectionAttempt, FailureClass, Manifest, SessionState
-from vpn_client.platform import NetworkStackError, SimulatedNetworkStack
+from vpn_client.platform import NetworkStackError
+from vpn_client.platform_adapters import BasePlatformAdapter, PlatformNetworkAdapter
 from vpn_client.policy import PolicyEngine
 from vpn_client.probe import ProbeEngine
 from vpn_client.runtime import RuntimeState
@@ -37,42 +38,64 @@ class SessionOrchestrator:
         transports: dict[str, Transport],
         probe_engine: ProbeEngine,
         policy_engine: PolicyEngine | None = None,
-        network_stack: SimulatedNetworkStack | None = None,
+        network_stack: PlatformNetworkAdapter | None = None,
         telemetry: TelemetryRecorder | None = None,
         state_manager: StateManager | None = None,
         dataplane: DataPlaneBackend | None = None,
         runtime_state: RuntimeState | None = None,
+        client_platform: ClientPlatform | None = None,
     ):
         self.transports = transports
         self.probe_engine = probe_engine
         self.policy_engine = policy_engine or PolicyEngine()
-        self.network_stack = network_stack or SimulatedNetworkStack()
+        self.network_stack = network_stack or BasePlatformAdapter()
         self.telemetry = telemetry or TelemetryRecorder()
         self.state_manager = state_manager
         self.dataplane = dataplane or NullDataPlane()
         self.runtime_state = runtime_state
+        self.client_platform = client_platform
         self.scheduler = EndpointScheduler(state_manager=state_manager)
         self.health_monitor = SessionHealthMonitor(self.dataplane, self.network_stack, self.telemetry)
         self.state = SessionState.IDLE
-        self.last_known_good_endpoint_id: str | None = None
+        self.last_known_good_endpoint_id: str | None = (
+            state_manager.state.last_connected_endpoint_id
+            if state_manager is not None
+            else None
+        )
+
+    def _cleanup_after_failed_attempt(self, transport: Transport, disconnect_network_stack: bool) -> None:
+        transport.disconnect()
+        if disconnect_network_stack:
+            self.network_stack.disconnect()
+        self.dataplane.disconnect()
+        if self.runtime_state:
+            self.runtime_state.clear()
 
     def connect(self, manifest: Manifest) -> SessionReport:
         self.state = SessionState.LOADING
         attempts: list[ConnectionAttempt] = []
+        if self.state_manager:
+            self.state_manager.reconcile_manifest(manifest)
+            self.last_known_good_endpoint_id = self.state_manager.state.last_connected_endpoint_id
         network_policy = self.policy_engine.resolve_network_policy(manifest)
         self.telemetry.record("session_start", self.state)
 
         scheduled_endpoints = self.scheduler.schedule(
             manifest,
             last_known_good_endpoint_id=self.last_known_good_endpoint_id,
+            client_platform=self.client_platform,
         )
         self.state = SessionState.PROBING
 
         last_failure = FailureClass.UNKNOWN
         last_detail = "no endpoints available"
+        last_endpoint_id: str | None = None
+        last_transport: str | None = None
 
         for scheduled in scheduled_endpoints:
             endpoint = scheduled.endpoint
+            last_endpoint_id = endpoint.id
+            last_transport = endpoint.transport
             if scheduled.cooling_down:
                 self.telemetry.record(
                     "endpoint_cooling_down",
@@ -91,6 +114,7 @@ class SessionOrchestrator:
                 )
             probe = self.probe_engine.probe(endpoint)
             if not probe.reachable:
+                mitigation_actions: list[str] = []
                 if self.state_manager and scheduled.pending_reenable:
                     self.state_manager.mark_transport_reenable_pending(endpoint.transport, False)
                     self.state_manager.set_incident_flag_with_ttl(
@@ -100,13 +124,21 @@ class SessionOrchestrator:
                     )
                 if self.state_manager:
                     self.state_manager.mark_failure(endpoint.id, probe.failure_class, probe.detail)
+                    mitigation_actions = self.state_manager.apply_failure_mitigation(
+                        probe.failure_class,
+                        transport=endpoint.transport,
+                    )
                 self.telemetry.record(
                     "probe_failed",
                     self.state,
                     probe.failure_class,
                     endpoint_id=endpoint.id,
                     transport=endpoint.transport,
-                    detail=probe.detail,
+                    detail=(
+                        f"{probe.detail}; mitigations={','.join(mitigation_actions)}"
+                        if mitigation_actions
+                        else probe.detail
+                    ),
                 )
                 attempts.append(
                     ConnectionAttempt(
@@ -114,11 +146,19 @@ class SessionOrchestrator:
                         transport=endpoint.transport,
                         success=False,
                         failure_class=probe.failure_class,
-                        detail=probe.detail,
+                        detail=(
+                            f"{probe.detail}; mitigations={','.join(mitigation_actions)}"
+                            if mitigation_actions
+                            else probe.detail
+                        ),
                     )
                 )
                 last_failure = probe.failure_class
-                last_detail = probe.detail
+                last_detail = (
+                    f"{probe.detail}; mitigations={','.join(mitigation_actions)}"
+                    if mitigation_actions
+                    else probe.detail
+                )
                 continue
 
             transport = self.transports.get(endpoint.transport)
@@ -144,6 +184,9 @@ class SessionOrchestrator:
                 apply_fn = self.network_stack.reconnect if self.network_stack.applied_state else self.network_stack.apply
                 applied = apply_fn(endpoint, network_policy)
                 self.dataplane.connect(endpoint)
+                health_report = self.health_monitor.check(endpoint)
+                if not health_report.healthy:
+                    raise DataPlaneError(health_report.failure_class, health_report.detail)
                 self.state = SessionState.CONNECTED
                 self.last_known_good_endpoint_id = endpoint.id
                 self.telemetry.record(
@@ -151,7 +194,7 @@ class SessionOrchestrator:
                     self.state,
                     endpoint_id=endpoint.id,
                     transport=endpoint.transport,
-                    detail="transport and network policy applied",
+                    detail="transport, network policy, and initial health check passed",
                 )
                 attempts.append(
                     ConnectionAttempt(
@@ -162,9 +205,6 @@ class SessionOrchestrator:
                         detail="connected",
                     )
                 )
-                health_report = self.health_monitor.check(endpoint)
-                if not health_report.healthy:
-                    raise DataPlaneError(health_report.failure_class, health_report.detail)
                 if self.state_manager:
                     self.state_manager.mark_success(endpoint.id)
                     self.state_manager.clear_transport_crash_streak(endpoint.transport)
@@ -213,11 +253,7 @@ class SessionOrchestrator:
             except DataPlaneError as exc:
                 disabled_transport = False
                 runtime_snapshot = self.dataplane.runtime_snapshot()
-                transport.disconnect()
-                self.network_stack.disconnect()
-                self.dataplane.disconnect()
-                if self.runtime_state:
-                    self.runtime_state.clear()
+                self._cleanup_after_failed_attempt(transport, disconnect_network_stack=True)
                 if self.state_manager:
                     self.state_manager.mark_failure(endpoint.id, exc.failure_class, exc.detail)
                     if runtime_snapshot.get("crashed"):
@@ -270,10 +306,7 @@ class SessionOrchestrator:
                     else exc.detail
                 )
             except NetworkStackError as exc:
-                transport.disconnect()
-                self.dataplane.disconnect()
-                if self.runtime_state:
-                    self.runtime_state.clear()
+                self._cleanup_after_failed_attempt(transport, disconnect_network_stack=False)
                 if self.state_manager:
                     self.state_manager.mark_failure(endpoint.id, exc.failure_class, exc.detail)
                     if scheduled.pending_reenable:
@@ -308,11 +341,15 @@ class SessionOrchestrator:
             "session_degraded",
             self.state,
             last_failure,
+            endpoint_id=last_endpoint_id,
+            transport=last_transport,
             detail=last_detail,
         )
         return SessionReport(
             state=self.state,
             attempts=attempts,
+            selected_endpoint_id=last_endpoint_id,
+            selected_transport=last_transport,
             kill_switch_active=self.network_stack.kill_switch_active,
             failure_class=last_failure,
             detail=last_detail,
@@ -394,13 +431,10 @@ class SessionOrchestrator:
             manifest,
             limit=tick_policy.reevaluate_pending_transports_limit,
         )
-        incident_summary = self.build_runtime_incident_summary(manifest)
-        self.emit_runtime_incident_summary(incident_summary)
         return RuntimeTickReport(
             reenabled_transports=reenabled,
             pending_ready_transports=pending_ready,
             pending_total=pending_total,
-            incident_summary=incident_summary,
         )
 
     def build_incident_summary(
@@ -424,29 +458,6 @@ class SessionOrchestrator:
             policy_engine=self.policy_engine,
         )
 
-    def build_runtime_incident_summary(self, manifest: Manifest) -> dict[str, object]:
-        if self.state_manager is None:
-            raise RuntimeError("runtime incident summary requires a state manager")
-
-        selected_endpoint_id = self.network_stack.applied_state.endpoint_id if self.network_stack.applied_state else None
-        selected_transport = next(
-            (endpoint.transport for endpoint in manifest.endpoints if endpoint.id == selected_endpoint_id),
-            None,
-        )
-        report = SessionReport(
-            state=SessionState.IDLE if self.state is SessionState.IDLE else self.state,
-            selected_endpoint_id=selected_endpoint_id,
-            selected_transport=selected_transport,
-            failure_class=FailureClass.NONE,
-            detail="runtime maintenance state",
-        )
-        return self.build_incident_summary(
-            manifest=manifest,
-            report=report,
-            recovery_report=SimpleNamespace(stale_marker_found=False),
-            recovery_cleanup_enabled=False,
-        )
-
     def emit_incident_summary(self, report: SessionReport, incident_summary: dict[str, object]) -> None:
         if incident_summary["severity"] == "ok":
             return
@@ -463,20 +474,34 @@ class SessionOrchestrator:
             ),
         )
 
-    def emit_runtime_incident_summary(self, incident_summary: dict[str, object]) -> None:
-        if incident_summary["severity"] == "ok":
-            return
-
+    def _degrade_current_session(
+        self,
+        endpoint,
+        failure_class: FailureClass,
+        detail: str,
+    ) -> SessionReport:
+        applied_state = self.network_stack.applied_state
+        applied_tunnel_mode = applied_state.tunnel_mode if applied_state is not None else None
+        self.dataplane.disconnect()
+        if self.runtime_state:
+            self.runtime_state.clear()
+        self.state = SessionState.DEGRADED
         self.telemetry.record(
-            "runtime_incident_summary",
-            SessionState.IDLE if self.state is SessionState.IDLE else self.state,
-            FailureClass(incident_summary["failure_class"]),
-            endpoint_id=incident_summary.get("selected_endpoint_id"),
-            transport=incident_summary.get("selected_transport"),
-            detail=(
-                f"{incident_summary['severity']}: {incident_summary['headline']}; "
-                f"{incident_summary['recommended_action']}"
-            ),
+            "session_degraded",
+            self.state,
+            failure_class,
+            endpoint_id=endpoint.id,
+            transport=endpoint.transport,
+            detail=detail,
+        )
+        return SessionReport(
+            state=self.state,
+            selected_endpoint_id=endpoint.id,
+            selected_transport=endpoint.transport,
+            applied_tunnel_mode=applied_tunnel_mode,
+            kill_switch_active=self.network_stack.kill_switch_active,
+            failure_class=failure_class,
+            detail=detail,
         )
 
     def monitor_connection(self, manifest: Manifest, checks: int = 1, auto_reconnect: bool = False) -> SessionReport | None:
@@ -518,15 +543,10 @@ class SessionOrchestrator:
                         detail=report.detail,
                     )
                     return self.reconnect(manifest)
-                self.state = SessionState.DEGRADED
-                return SessionReport(
-                    state=self.state,
-                    selected_endpoint_id=endpoint.id,
-                    selected_transport=endpoint.transport,
-                    applied_tunnel_mode=self.network_stack.applied_state.tunnel_mode,
-                    kill_switch_active=self.network_stack.kill_switch_active,
-                    failure_class=report.failure_class,
-                    detail=report.detail,
+                return self._degrade_current_session(
+                    endpoint,
+                    report.failure_class,
+                    report.detail,
                 )
         return SessionReport(
             state=self.state,
