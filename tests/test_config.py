@@ -11,8 +11,26 @@ from vpn_client.security import Ed25519Verifier, generate_keypair, sign_payload
 def signed_manifest(private_pem: bytes) -> dict:
     manifest = {
         "version": 1,
+        "schema_version": 1,
         "generated_at": "2026-04-23T00:00:00Z",
         "expires_at": "2026-04-30T00:00:00Z",
+        "platform_capabilities": {
+            "linux": {
+                "platform": "linux",
+                "supported_dataplanes": ["linux-userspace", "routed"],
+                "network_adapter": "linux",
+                "startup_reconciliation": True,
+                "status": "prototype",
+                "notes": "Linux dry-run adapter.",
+            },
+            "ios": {
+                "platform": "ios",
+                "supported_dataplanes": ["ios-bridge", "routed"],
+                "network_adapter": "ios",
+                "status": "planned",
+                "notes": "Future Network Extension path.",
+            },
+        },
         "features": {"support_bundle_enabled": True},
         "transport_policy": {
             "preferred_order": ["wireguard", "https"],
@@ -48,6 +66,8 @@ class SignedManifestLoaderTests(unittest.TestCase):
 
             self.assertEqual(manifest.version, 1)
             self.assertTrue(store.last_known_good_path.exists())
+            self.assertIn("linux", manifest.platform_capabilities)
+            self.assertEqual(manifest.schema_version, 1)
 
     def test_loader_uses_cached_copy_when_primary_fails(self) -> None:
         private_pem, public_pem = generate_keypair()
@@ -69,6 +89,32 @@ class SignedManifestLoaderTests(unittest.TestCase):
             manifest = loader.load_with_fallback(broken_path)
             self.assertEqual(manifest.endpoints[0].id, "edge-1")
 
+    def test_loader_rejects_expired_cached_copy_when_primary_fails(self) -> None:
+        private_pem, public_pem = generate_keypair()
+        verifier = Ed25519Verifier.from_public_key_pem(public_pem)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            store = ManifestStore(root / "cache")
+            loader = SignedManifestLoader(verifier=verifier, store=store)
+
+            good = signed_manifest(private_pem)
+            loader.load_dict(good)
+
+            expired_cached = signed_manifest(private_pem)
+            expired_cached["expires_at"] = "2020-01-01T00:00:00Z"
+            store.save_last_known_good(expired_cached)
+
+            broken_path = root / "broken.json"
+            broken = signed_manifest(private_pem)
+            broken["signature"] = "corrupted"
+            broken_path.write_text(__import__("json").dumps(broken), encoding="utf-8")
+
+            with self.assertRaises(Exception) as ctx:
+                loader.load_with_fallback(broken_path)
+
+            self.assertIn("expired", str(ctx.exception))
+
     def test_loader_rejects_expired_manifest(self) -> None:
         private_pem, public_pem = generate_keypair()
         verifier = Ed25519Verifier.from_public_key_pem(public_pem)
@@ -84,7 +130,7 @@ class SignedManifestLoaderTests(unittest.TestCase):
             with self.assertRaises(Exception):
                 loader.load_dict(expired)
 
-    def test_loader_accepts_valid_incident_guidance_overrides(self) -> None:
+    def test_loader_accepts_missing_schema_version_as_current_default(self) -> None:
         private_pem, public_pem = generate_keypair()
         verifier = Ed25519Verifier.from_public_key_pem(public_pem)
 
@@ -93,19 +139,53 @@ class SignedManifestLoaderTests(unittest.TestCase):
             loader = SignedManifestLoader(verifier=verifier, store=store)
 
             manifest = signed_manifest(private_pem)
-            manifest["features"]["incident_guidance_overrides"] = {
-                "tls_interference": {
-                    "severity": "critical",
-                    "recommended_action": "Use emergency fallback transport before retrying.",
-                }
+            manifest.pop("schema_version")
+            manifest["signature"] = sign_payload(private_pem, canonical_manifest_bytes(manifest))
+
+            loaded = loader.load_dict(manifest)
+
+            self.assertEqual(loaded.schema_version, 1)
+
+    def test_loader_rejects_unsupported_manifest_schema_version(self) -> None:
+        private_pem, public_pem = generate_keypair()
+        verifier = Ed25519Verifier.from_public_key_pem(public_pem)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            store = ManifestStore(Path(tmp) / "cache")
+            loader = SignedManifestLoader(verifier=verifier, store=store)
+
+            manifest = signed_manifest(private_pem)
+            manifest["schema_version"] = 2
+            manifest["signature"] = sign_payload(private_pem, canonical_manifest_bytes(manifest))
+
+            with self.assertRaises(Exception) as ctx:
+                loader.load_dict(manifest)
+
+            self.assertIn("unsupported manifest schema_version", str(ctx.exception))
+
+    def test_loader_accepts_provider_profile_schema_version_for_provider_profile(self) -> None:
+        private_pem, public_pem = generate_keypair()
+        verifier = Ed25519Verifier.from_public_key_pem(public_pem)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            store = ManifestStore(Path(tmp) / "cache")
+            loader = SignedManifestLoader(verifier=verifier, store=store)
+
+            manifest = signed_manifest(private_pem)
+            manifest["features"]["profile_kind"] = "provider-profile"
+            manifest["provider_profile_schema_version"] = 1
+            manifest["endpoints"][0]["metadata"] = {
+                "logical_server": "edge",
+                "supported_client_platforms": ["linux"],
+                "provider_profile_schema_version": 1,
             }
             manifest["signature"] = sign_payload(private_pem, canonical_manifest_bytes(manifest))
 
             loaded = loader.load_dict(manifest)
 
-            self.assertIn("incident_guidance_overrides", loaded.features)
+            self.assertEqual(loaded.provider_profile_schema_version, 1)
 
-    def test_loader_rejects_invalid_incident_guidance_override_key(self) -> None:
+    def test_loader_accepts_missing_provider_profile_schema_version_as_current_default(self) -> None:
         private_pem, public_pem = generate_keypair()
         verifier = Ed25519Verifier.from_public_key_pem(public_pem)
 
@@ -114,18 +194,20 @@ class SignedManifestLoaderTests(unittest.TestCase):
             loader = SignedManifestLoader(verifier=verifier, store=store)
 
             manifest = signed_manifest(private_pem)
-            manifest["features"]["incident_guidance_overrides"] = {
-                "made_up_failure": {
-                    "severity": "warning",
-                    "recommended_action": "noop",
-                }
+            manifest["features"]["profile_kind"] = "provider-profile"
+            manifest.pop("provider_profile_schema_version", None)
+            manifest["endpoints"][0]["metadata"] = {
+                "logical_server": "edge",
+                "supported_client_platforms": ["linux"],
+                "provider_profile_schema_version": 1,
             }
             manifest["signature"] = sign_payload(private_pem, canonical_manifest_bytes(manifest))
 
-            with self.assertRaises(Exception):
-                loader.load_dict(manifest)
+            loaded = loader.load_dict(manifest)
 
-    def test_loader_rejects_invalid_incident_guidance_override_shape(self) -> None:
+            self.assertIsNone(loaded.provider_profile_schema_version)
+
+    def test_loader_rejects_unsupported_provider_profile_schema_version(self) -> None:
         private_pem, public_pem = generate_keypair()
         verifier = Ed25519Verifier.from_public_key_pem(public_pem)
 
@@ -134,17 +216,45 @@ class SignedManifestLoaderTests(unittest.TestCase):
             loader = SignedManifestLoader(verifier=verifier, store=store)
 
             manifest = signed_manifest(private_pem)
-            manifest["features"]["incident_guidance_overrides"] = {
-                "tls_interference": {
-                    "severity": "loud",
-                    "recommended_action": "",
-                }
-            }
+            manifest["features"]["profile_kind"] = "provider-profile"
+            manifest["provider_profile_schema_version"] = 2
             manifest["signature"] = sign_payload(private_pem, canonical_manifest_bytes(manifest))
 
-            with self.assertRaises(Exception):
+            with self.assertRaises(Exception) as ctx:
                 loader.load_dict(manifest)
 
+            self.assertIn("unsupported provider_profile_schema_version", str(ctx.exception))
 
-if __name__ == "__main__":
-    unittest.main()
+    def test_loader_rejects_provider_profile_schema_version_without_provider_profile_kind(self) -> None:
+        private_pem, public_pem = generate_keypair()
+        verifier = Ed25519Verifier.from_public_key_pem(public_pem)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            store = ManifestStore(Path(tmp) / "cache")
+            loader = SignedManifestLoader(verifier=verifier, store=store)
+
+            manifest = signed_manifest(private_pem)
+            manifest["provider_profile_schema_version"] = 1
+            manifest["signature"] = sign_payload(private_pem, canonical_manifest_bytes(manifest))
+
+            with self.assertRaises(Exception) as ctx:
+                loader.load_dict(manifest)
+
+            self.assertIn("profile_kind='provider-profile'", str(ctx.exception))
+
+    def test_loader_rejects_provider_profile_endpoint_schema_mismatch(self) -> None:
+        private_pem, public_pem = generate_keypair()
+        verifier = Ed25519Verifier.from_public_key_pem(public_pem)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            store = ManifestStore(Path(tmp) / "cache")
+            loader = SignedManifestLoader(verifier=verifier, store=store)
+
+            manifest = signed_manifest(private_pem)
+            manifest["features"]["profile_kind"] = "provider-profile"
+            manifest["provider_profile_schema_version"] = 1
+            manifest["endpoints"][0]["metadata"] = {
+                "logical_server": "spb-main",
+                "supported_client_platforms": ["linux"],
+                "provider_profile_schema_version": 2,
+            }
