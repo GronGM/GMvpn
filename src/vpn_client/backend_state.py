@@ -31,8 +31,12 @@ class BackendStateStore:
     def load(self) -> BackendStateRecord | None:
         if not self.path.exists():
             return None
-        payload = json.loads(self.path.read_text(encoding="utf-8"))
-        return BackendStateRecord(**payload)
+        try:
+            payload = json.loads(self.path.read_text(encoding="utf-8"))
+            return BackendStateRecord(**payload)
+        except (json.JSONDecodeError, TypeError, ValueError):
+            self.clear()
+            return None
 
     def save(self, record: BackendStateRecord) -> None:
         self.path.write_text(json.dumps(asdict(record), indent=2, sort_keys=True), encoding="utf-8")
