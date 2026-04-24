@@ -288,6 +288,37 @@ Rules:
 - `max_retry_delay_seconds` must stay in the bounded range `120..3600`;
 - `max_retry_delay_seconds` must not be lower than `retry_delay_seconds`.
 
+The manifest can also bound local transport disable semantics for repeated crashes and soft failures:
+
+```json
+{
+  "features": {
+    "transport_failure_policy": {
+      "default": {
+        "crash_threshold": 1,
+        "soft_fail_threshold": 3,
+        "crash_disable_ttl_seconds": 900,
+        "soft_fail_disable_ttl_seconds": 300
+      },
+      "by_transport": {
+        "wireguard": {
+          "soft_fail_threshold": 2,
+          "soft_fail_disable_ttl_seconds": 600
+        }
+      }
+    }
+  }
+}
+```
+
+Rules:
+
+- `default` sets the base crash and soft-failure disable behavior;
+- `by_transport` can override that behavior for a specific transport;
+- `crash_threshold` and `soft_fail_threshold` must stay in the bounded range `1..5`;
+- `crash_disable_ttl_seconds` must stay in the bounded range `60..3600`;
+- `soft_fail_disable_ttl_seconds` must stay in the bounded range `60..1800`.
+
 ## Support Bundle Diagnostics
 
 The support bundle now exports the effective monitoring policy and the persistent state used to reason about repeated soft failures:
@@ -296,8 +327,10 @@ The support bundle now exports the effective monitoring policy and the persisten
 - `session_health_auto_reconnect`
 - `session_health_policy_resolved`
 - `transport_reenable_policy_resolved`
+- `transport_failure_policy_resolved`
 - `session_health_fail_streak`
 - `session_health_fail_bucket`
+- `transport_crash_buckets`
 - `transport_soft_fail_streaks`
 - `transport_soft_fail_buckets`
 - `endpoint_health[*].last_failure_class`
@@ -305,6 +338,8 @@ The support bundle now exports the effective monitoring policy and the persisten
 
 `transport_soft_fail_buckets` and `session_health_fail_bucket` use the format `failure_class:reason_code`.
 That means the runtime does not keep one shared streak for unrelated symptoms. A repeated `network_down:dataplane_healthcheck_failed` pattern is treated separately from `network_down:dataplane_session_inactive`.
+
+`transport_crash_buckets` keep the last crash reason-code bucket used for local transport disable decisions, so repeated crashes with different root symptoms do not silently accumulate as one shared streak.
 
 ## Reason Codes
 

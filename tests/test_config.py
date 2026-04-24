@@ -458,6 +458,28 @@ class SignedManifestLoaderTests(unittest.TestCase):
 
             self.assertIn("max_retry_delay_seconds", str(ctx.exception))
 
+    def test_loader_rejects_invalid_transport_failure_policy(self) -> None:
+        private_pem, public_pem = generate_keypair()
+        verifier = Ed25519Verifier.from_public_key_pem(public_pem)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            store = ManifestStore(Path(tmp) / "cache")
+            loader = SignedManifestLoader(verifier=verifier, store=store)
+
+            manifest = signed_manifest(private_pem)
+            manifest["features"]["transport_failure_policy"] = {
+                "default": {
+                    "crash_threshold": 1,
+                    "soft_fail_threshold": 8,
+                }
+            }
+            manifest["signature"] = sign_payload(private_pem, canonical_manifest_bytes(manifest))
+
+            with self.assertRaises(Exception) as ctx:
+                loader.load_dict(manifest)
+
+            self.assertIn("soft_fail_threshold", str(ctx.exception))
+
     def test_loader_rejects_invalid_endpoint_supported_client_platforms(self) -> None:
         private_pem, public_pem = generate_keypair()
         verifier = Ed25519Verifier.from_public_key_pem(public_pem)

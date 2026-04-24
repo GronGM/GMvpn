@@ -900,6 +900,58 @@ class SessionOrchestratorTests(unittest.TestCase):
             self.assertEqual(state_manager.transport_crash_streak("https"), 1)
             self.assertTrue(state_manager.incident_flag("disable_transport_https"))
 
+    def test_transport_failure_policy_can_delay_disable_after_first_crash(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            state_manager = StateManager(StateStore(Path(tmp) / "state.json"))
+            orchestrator = SessionOrchestrator(
+                default_transport_registry(),
+                ProbeEngine(),
+                policy_engine=PolicyEngine(state_manager=state_manager),
+                network_stack=SimulatedNetworkStack(),
+                telemetry=TelemetryRecorder(),
+                dataplane=LinuxUserspaceDataPlane(dry_run=True),
+                state_manager=state_manager,
+            )
+            manifest = Manifest(
+                version=1,
+                generated_at="2026-04-23T00:00:00Z",
+                expires_at="2026-04-30T00:00:00Z",
+                features={
+                    "transport_failure_policy": {
+                        "default": {
+                            "crash_threshold": 2,
+                            "crash_disable_ttl_seconds": 1200,
+                        }
+                    }
+                },
+                transport_policy=TransportPolicy(preferred_order=["https", "wireguard"], retry_budget=2),
+                network_policy=NetworkPolicy(),
+                endpoints=[
+                    Endpoint(
+                        id="https-1",
+                        host="198.51.100.20",
+                        port=443,
+                        transport="https",
+                        region="eu-central",
+                        metadata={"dataplane_failure": "crash"},
+                    ),
+                    Endpoint(
+                        id="wg-1",
+                        host="198.51.100.21",
+                        port=51820,
+                        transport="wireguard",
+                        region="eu-central",
+                        metadata={},
+                    ),
+                ],
+            )
+
+            first = orchestrator.connect(manifest)
+
+            self.assertEqual(first.selected_endpoint_id, "wg-1")
+            self.assertEqual(state_manager.transport_crash_streak("https"), 1)
+            self.assertFalse(state_manager.incident_flag("disable_transport_https"))
+
     def test_soft_failures_disable_transport_after_threshold(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             state_manager = StateManager(StateStore(Path(tmp) / "state.json"))
@@ -938,6 +990,50 @@ class SessionOrchestratorTests(unittest.TestCase):
             self.assertEqual(second.state, SessionState.DEGRADED)
             self.assertEqual(third.state, SessionState.DEGRADED)
             self.assertEqual(state_manager.transport_soft_fail_streak("https"), 3)
+            self.assertTrue(state_manager.incident_flag("disable_transport_https"))
+
+    def test_transport_failure_policy_can_disable_after_single_soft_failure(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            state_manager = StateManager(StateStore(Path(tmp) / "state.json"))
+            orchestrator = SessionOrchestrator(
+                default_transport_registry(),
+                ProbeEngine(),
+                policy_engine=PolicyEngine(state_manager=state_manager),
+                network_stack=SimulatedNetworkStack(),
+                telemetry=TelemetryRecorder(),
+                dataplane=LinuxUserspaceDataPlane(dry_run=True),
+                state_manager=state_manager,
+            )
+            manifest = Manifest(
+                version=1,
+                generated_at="2026-04-23T00:00:00Z",
+                expires_at="2026-04-30T00:00:00Z",
+                features={
+                    "transport_failure_policy": {
+                        "default": {
+                            "soft_fail_threshold": 1,
+                            "soft_fail_disable_ttl_seconds": 600,
+                        }
+                    }
+                },
+                transport_policy=TransportPolicy(preferred_order=["https"], retry_budget=1),
+                network_policy=NetworkPolicy(),
+                endpoints=[
+                    Endpoint(
+                        id="https-1",
+                        host="198.51.100.20",
+                        port=443,
+                        transport="https",
+                        region="eu-central",
+                        metadata={"dataplane_failure": "health"},
+                    ),
+                ],
+            )
+
+            first = orchestrator.connect(manifest)
+
+            self.assertEqual(first.state, SessionState.DEGRADED)
+            self.assertEqual(state_manager.transport_soft_fail_streak("https"), 1)
             self.assertTrue(state_manager.incident_flag("disable_transport_https"))
 
     def test_transport_reenters_as_pending_after_ttl_expiry(self) -> None:

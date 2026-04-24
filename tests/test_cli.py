@@ -94,8 +94,20 @@ class CliTests(unittest.TestCase):
                 1800,
             )
             self.assertEqual(
+                payload["extra"]["transport_failure_policy_resolved"]["https"]["crash_threshold"],
+                1,
+            )
+            self.assertEqual(
+                payload["extra"]["transport_failure_policy_resolved"]["https"]["soft_fail_threshold"],
+                3,
+            )
+            self.assertEqual(
                 payload["extra"]["transport_recovery"]["https"]["crash_reason"],
                 "stale runtime marker recovered on startup",
+            )
+            self.assertEqual(
+                payload["extra"]["transport_recovery"]["https"]["crash_bucket"],
+                None,
             )
             self.assertEqual(payload["extra"]["transport_recovery"]["https"]["crash_streak"], 0)
 

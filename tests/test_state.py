@@ -93,11 +93,48 @@ class StateManagerTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             manager = StateManager(StateStore(Path(tmp) / "state.json"))
 
-            manager.record_transport_crash("https", "userspace backend crashed", threshold=1)
+            manager.record_transport_crash(
+                "https",
+                "userspace backend crashed",
+                reason_code=FailureReasonCode.DATAPLANE_BACKEND_CRASHED,
+                threshold=1,
+            )
             manager.clear_transport_crash_streak("https")
 
             self.assertEqual(manager.transport_crash_streak("https"), 0)
             self.assertEqual(manager.transport_crash_reason("https"), "userspace backend crashed")
+
+    def test_transport_crash_streak_resets_when_reason_changes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            manager = StateManager(StateStore(Path(tmp) / "state.json"))
+
+            first = manager.record_transport_crash(
+                "https",
+                "backend crashed",
+                reason_code=FailureReasonCode.DATAPLANE_BACKEND_CRASHED,
+                threshold=3,
+            )
+            second = manager.record_transport_crash(
+                "https",
+                "backend crashed again",
+                reason_code=FailureReasonCode.DATAPLANE_BACKEND_CRASHED,
+                threshold=3,
+            )
+            third = manager.record_transport_crash(
+                "https",
+                "pid missing",
+                reason_code=FailureReasonCode.DATAPLANE_PID_MISSING,
+                threshold=3,
+            )
+
+            self.assertFalse(first)
+            self.assertFalse(second)
+            self.assertFalse(third)
+            self.assertEqual(manager.transport_crash_streak("https"), 1)
+            self.assertEqual(
+                manager.state.transport_crash_buckets["https"],
+                "dataplane_pid_missing",
+            )
 
     def test_dns_interference_enables_temporary_system_dns_fallback(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
