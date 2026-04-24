@@ -128,6 +128,52 @@ class IncidentSummaryTests(unittest.TestCase):
                 "Use the provider emergency fallback profile before retrying.",
             )
 
+    def test_incident_summary_exposes_dns_mitigation_flags(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            manager = StateManager(StateStore(Path(tmp) / "state.json"))
+            manager.apply_failure_mitigation(FailureClass.DNS_INTERFERENCE)
+
+            summary = build_incident_summary(
+                state_manager=manager,
+                report=DummyReport(
+                    state=SessionState.CONNECTED,
+                    selected_endpoint_id="edge-1",
+                    selected_transport="https",
+                ),
+                recovery_report=DummyRecoveryReport(stale_marker_found=False),
+                recovery_cleanup_enabled=False,
+                simulated_stale_runtime_endpoint_id=None,
+            )
+
+            self.assertEqual(summary["headline"], "one or more local failure mitigations are active")
+            self.assertEqual(summary["severity"], "warning")
+            self.assertIn("force_system_dns_fallback", summary["active_incident_flags"])
+            self.assertIn("force_system_dns_fallback", summary["active_mitigation_flags"])
+            self.assertIn("force_system_dns_fallback", summary["mitigation_flag_expires_at"])
+
+    def test_incident_summary_exposes_transport_disable_mitigation(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            manager = StateManager(StateStore(Path(tmp) / "state.json"))
+            manager.apply_failure_mitigation(FailureClass.UDP_BLOCKED, transport="wireguard")
+
+            summary = build_incident_summary(
+                state_manager=manager,
+                report=DummyReport(
+                    state=SessionState.CONNECTED,
+                    selected_endpoint_id="edge-1",
+                    selected_transport="https",
+                ),
+                recovery_report=DummyRecoveryReport(stale_marker_found=False),
+                recovery_cleanup_enabled=False,
+                simulated_stale_runtime_endpoint_id=None,
+            )
+
+            self.assertEqual(summary["headline"], "one or more transports are locally disabled")
+            self.assertEqual(summary["severity"], "warning")
+            self.assertIn("disable_transport_wireguard", summary["active_disable_flags"])
+            self.assertIn("disable_transport_wireguard", summary["active_mitigation_flags"])
+            self.assertIn("disable_transport_wireguard", summary["mitigation_flag_expires_at"])
+
 
 if __name__ == "__main__":
     unittest.main()
