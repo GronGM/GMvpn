@@ -97,6 +97,38 @@ class ReleaseGuardrailTests(unittest.TestCase):
             ],
         )
 
+    def test_parse_cli_output_collects_release_facing_fields(self) -> None:
+        parsed = release_guardrail._parse_cli_output(
+            "\n".join(
+                [
+                    "state=SessionState.FAILED",
+                    "session_health_checks=0",
+                    "session_health_auto_reconnect=False",
+                    "session_health_failure_threshold=2",
+                    "runtime_tick_reevaluate_pending_transports_limit=2",
+                    "runtime_support_tier=development-only",
+                    "runtime_support_in_mvp_scope=False",
+                    "incident_summary:",
+                    "  - severity=warning",
+                    "  - failure_class=tls_interference",
+                    "  - primary_transport_issue=quic disabled=False pending_reenable=False crash_bucket=None soft_fail_bucket=tls_interference:tls_handshake_failed",
+                ]
+            )
+        )
+
+        self.assertEqual(parsed["session_health_failure_threshold"], "2")
+        self.assertEqual(parsed["runtime_tick_reevaluate_pending_transports_limit"], "2")
+        self.assertEqual(parsed["incident_summary"]["severity"], "warning")
+        self.assertEqual(parsed["incident_summary"]["primary_transport_issue"]["transport"], "quic")
+        self.assertEqual(
+            parsed["incident_summary"]["primary_transport_issue"]["soft_fail_bucket"],
+            "tls_interference:tls_handshake_failed",
+        )
+
+    def test_release_artifact_policy_parity_passes(self) -> None:
+        failures = release_guardrail._check_release_artifact_policy()
+        self.assertEqual(failures, [])
+
 
 if __name__ == "__main__":
     unittest.main()

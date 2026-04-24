@@ -6,6 +6,8 @@ from vpn_client.models import DnsMode, FailureClass, Manifest, NetworkPolicy, Tr
 from vpn_client.client_platform import ClientPlatform
 from vpn_client.policy import (
     PolicyEngine,
+    validate_runtime_support_policy,
+    validate_runtime_tick_policy,
     validate_transport_failure_policy,
     validate_transport_reenable_policy,
 )
@@ -143,12 +145,12 @@ class PolicyEngineTests(unittest.TestCase):
             network_policy=NetworkPolicy(),
             features={
                 "session_health_policy": {
-                    "default": {"checks": 1, "auto_reconnect": False},
+                    "default": {"checks": 1, "auto_reconnect": False, "failure_threshold": 4},
                     "by_client_platform": {
                         "android": {"checks": 2},
                     },
                     "by_transport": {
-                        "https": {"auto_reconnect": True},
+                        "https": {"auto_reconnect": True, "failure_threshold": 2},
                     },
                 }
             },
@@ -162,6 +164,65 @@ class PolicyEngineTests(unittest.TestCase):
 
         self.assertEqual(resolved.checks, 2)
         self.assertTrue(resolved.auto_reconnect)
+        self.assertEqual(resolved.failure_threshold, 2)
+
+    def test_policy_engine_resolves_runtime_support_policy(self) -> None:
+        manifest = Manifest(
+            version=1,
+            generated_at="2026-04-23T00:00:00Z",
+            expires_at="2026-04-30T00:00:00Z",
+            endpoints=[],
+            transport_policy=TransportPolicy(preferred_order=["https"]),
+            network_policy=NetworkPolicy(),
+            features={
+                "runtime_support_policy": {
+                    "default": {"enforce_contract_match": True},
+                }
+            },
+        )
+
+        resolved = PolicyEngine().resolve_runtime_support_policy(manifest)
+
+        self.assertTrue(resolved.enforce_contract_match)
+
+    def test_validate_runtime_support_policy_rejects_invalid_shape(self) -> None:
+        with self.assertRaises(ValueError):
+            validate_runtime_support_policy(
+                {
+                    "default": {
+                        "enforce_contract_match": "yes",
+                    }
+                }
+            )
+
+    def test_policy_engine_resolves_runtime_tick_policy(self) -> None:
+        manifest = Manifest(
+            version=1,
+            generated_at="2026-04-23T00:00:00Z",
+            expires_at="2026-04-30T00:00:00Z",
+            endpoints=[],
+            transport_policy=TransportPolicy(preferred_order=["https"]),
+            network_policy=NetworkPolicy(),
+            features={
+                "runtime_tick_policy": {
+                    "default": {"reevaluate_pending_transports_limit": 2},
+                }
+            },
+        )
+
+        resolved = PolicyEngine().resolve_runtime_tick_policy(manifest)
+
+        self.assertEqual(resolved.reevaluate_pending_transports_limit, 2)
+
+    def test_validate_runtime_tick_policy_rejects_invalid_bounds(self) -> None:
+        with self.assertRaises(ValueError):
+            validate_runtime_tick_policy(
+                {
+                    "default": {
+                        "reevaluate_pending_transports_limit": 0,
+                    }
+                }
+            )
 
     def test_policy_engine_resolves_transport_reenable_policy_by_transport(self) -> None:
         manifest = Manifest(

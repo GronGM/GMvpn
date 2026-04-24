@@ -27,6 +27,8 @@ Read these support bundle fields before changing anything:
 - `events[*].incident_severity`
 - `events[*].primary_transport_issue`
 - `runtime_support`
+- `runtime_support_policy_resolved`
+- `runtime_tick_policy_resolved`
 - `startup_recovery`
 - `transport_recovery`
 - `incident_summary.primary_transport_issue`
@@ -36,6 +38,7 @@ Read these support bundle fields before changing anything:
 - `linux_execution`
 - `linux_reconciliation.failure_reason_code`
 - `session_health_policy_resolved`
+- `session_health_failure_threshold`
 - `transport_reenable_policy_resolved`
 - `transport_failure_policy_resolved`
 - recent telemetry `events`

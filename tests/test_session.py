@@ -154,7 +154,13 @@ class SessionOrchestratorTests(unittest.TestCase):
                 version=1,
                 generated_at="2026-04-23T00:00:00Z",
                 expires_at="2026-04-30T00:00:00Z",
-                features={},
+                features={
+                    "session_health_policy": {
+                        "default": {
+                            "failure_threshold": 2,
+                        }
+                    }
+                },
                 transport_policy=TransportPolicy(preferred_order=["https"]),
                 network_policy=NetworkPolicy(),
                 endpoints=[
@@ -362,7 +368,13 @@ class SessionOrchestratorTests(unittest.TestCase):
                 version=1,
                 generated_at="2026-04-23T00:00:00Z",
                 expires_at="2026-04-30T00:00:00Z",
-                features={},
+                features={
+                    "session_health_policy": {
+                        "default": {
+                            "failure_threshold": 2,
+                        }
+                    }
+                },
                 transport_policy=TransportPolicy(preferred_order=["https"], retry_budget=1),
                 network_policy=NetworkPolicy(),
                 endpoints=[
@@ -690,7 +702,13 @@ class SessionOrchestratorTests(unittest.TestCase):
                 version=1,
                 generated_at="2026-04-23T00:00:00Z",
                 expires_at="2026-04-30T00:00:00Z",
-                features={},
+                features={
+                    "session_health_policy": {
+                        "default": {
+                            "failure_threshold": 2,
+                        }
+                    }
+                },
                 transport_policy=TransportPolicy(preferred_order=["https"], retry_budget=1),
                 network_policy=NetworkPolicy(),
                 endpoints=[
@@ -739,7 +757,13 @@ class SessionOrchestratorTests(unittest.TestCase):
                 version=1,
                 generated_at="2026-04-23T00:00:00Z",
                 expires_at="2026-04-30T00:00:00Z",
-                features={},
+                features={
+                    "session_health_policy": {
+                        "default": {
+                            "failure_threshold": 2,
+                        }
+                    }
+                },
                 transport_policy=TransportPolicy(preferred_order=["https"], retry_budget=1),
                 network_policy=NetworkPolicy(),
                 endpoints=[
@@ -766,7 +790,8 @@ class SessionOrchestratorTests(unittest.TestCase):
                 state_manager.state.session_health_fail_bucket,
                 "network_down:dataplane_healthcheck_failed",
             )
-            self.assertTrue(any(event.kind == "session_health_suppressed" for event in telemetry.events))
+            suppressed = next(event for event in telemetry.events if event.kind == "session_health_suppressed")
+            self.assertIn("streak=1/2", suppressed.detail)
 
     def test_monitor_connection_clears_pending_soft_failure_after_recovery(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -1279,6 +1304,53 @@ class SessionOrchestratorTests(unittest.TestCase):
             self.assertEqual(report.pending_ready_transports, ["https"])
             self.assertEqual(report.reenabled_transports, ["https"])
             self.assertTrue(any(event.kind == "runtime_tick" for event in telemetry.events))
+
+    def test_runtime_tick_uses_manifest_policy_without_explicit_override(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            state_manager = StateManager(StateStore(Path(tmp) / "state.json"))
+            state_manager.set_incident_flag_with_ttl("disable_transport_https", True, ttl_seconds=1)
+            state_manager.state.incident_flag_expires_at["disable_transport_https"] = "2020-01-01T00:00:00+00:00"
+            self.assertFalse(state_manager.incident_flag("disable_transport_https"))
+            state_manager.state.transport_reenable_not_before["https"] = "2020-01-01T00:00:00+00:00"
+
+            telemetry = TelemetryRecorder()
+            orchestrator = SessionOrchestrator(
+                default_transport_registry(),
+                ProbeEngine(),
+                network_stack=SimulatedNetworkStack(),
+                telemetry=telemetry,
+                dataplane=LinuxUserspaceDataPlane(dry_run=True),
+                state_manager=state_manager,
+            )
+            manifest = Manifest(
+                version=1,
+                generated_at="2026-04-23T00:00:00Z",
+                expires_at="2026-04-30T00:00:00Z",
+                features={
+                    "runtime_tick_policy": {
+                        "default": {
+                            "reevaluate_pending_transports_limit": 2,
+                        }
+                    }
+                },
+                transport_policy=TransportPolicy(preferred_order=["https"], retry_budget=1),
+                network_policy=NetworkPolicy(),
+                endpoints=[
+                    Endpoint(
+                        id="https-1",
+                        host="198.51.100.20",
+                        port=443,
+                        transport="https",
+                        region="eu-central",
+                        metadata={},
+                    ),
+                ],
+            )
+
+            report = orchestrator.runtime_tick(manifest)
+
+            self.assertEqual(report.pending_ready_transports, ["https"])
+            self.assertEqual(report.reenabled_transports, ["https"])
 
     def test_supervisor_cycles_wrap_runtime_ticks(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

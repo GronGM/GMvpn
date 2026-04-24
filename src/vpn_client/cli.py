@@ -9,7 +9,7 @@ from vpn_client.backend_state import BackendStateStore
 from vpn_client.client_platform import ClientPlatform, backend_supported_on_platform, default_backend_for_platform
 from vpn_client.dataplane import LinuxUserspaceDataPlane, NullDataPlane, RoutedDataPlane
 from vpn_client.config import ManifestStore, SignedManifestLoader
-from vpn_client.models import SessionState
+from vpn_client.models import FailureClass, FailureReasonCode, SessionState
 from vpn_client.platform_adapters import LinuxPlatformAdapter, create_platform_adapter
 from vpn_client.policy import PolicyEngine, validate_incident_guidance_overrides
 from vpn_client.probe import ProbeEngine
@@ -18,7 +18,7 @@ from vpn_client.runtime import RuntimeState
 from vpn_client.runtime_support import assess_runtime_support
 from vpn_client.runtime_tick import RuntimeTickPolicy
 from vpn_client.security import Ed25519Verifier
-from vpn_client.session import SessionOrchestrator
+from vpn_client.session import SessionOrchestrator, SessionReport
 from vpn_client.state import StateManager, StateStore
 from vpn_client.supervisor import RuntimeSupervisor
 from vpn_client.telemetry import TelemetryRecorder
@@ -160,10 +160,15 @@ def build_parser() -> argparse.ArgumentParser:
         help="Persistent backend process state for crash diagnostics",
     )
     parser.add_argument(
+        "--allow-runtime-contract-mismatch",
+        action="store_true",
+        help="Allow startup to continue even when strict runtime support contract enforcement would block it",
+    )
+    parser.add_argument(
         "--reevaluate-pending-transports",
         type=int,
-        default=0,
-        help="Run N background pending-transport reevaluation ticks before exit",
+        default=None,
+        help="Override the per-tick pending-transport reevaluation limit for this local run",
     )
     parser.add_argument(
         "--runtime-ticks",
@@ -278,10 +283,32 @@ def main() -> int:
         runtime_state=runtime_state,
         client_platform=client_platform,
     )
+    resolved_runtime_support_policy = orchestrator.policy_engine.resolve_runtime_support_policy(manifest)
+    resolved_runtime_tick_policy = orchestrator.policy_engine.resolve_runtime_tick_policy(manifest)
+    runtime_support_gate_blocked = (
+        resolved_runtime_support_policy.enforce_contract_match
+        and runtime_support.tier == "contract-mismatch"
+        and not args.allow_runtime_contract_mismatch
+    )
     supervisor = RuntimeSupervisor(orchestrator, telemetry)
-    report = orchestrator.connect(manifest)
-    if args.reconnect_once and report.state is SessionState.CONNECTED:
-        report = orchestrator.reconnect(manifest)
+    if runtime_support_gate_blocked:
+        telemetry.record(
+            "runtime_support_gate_blocked",
+            SessionState.FAILED,
+            FailureClass.UNKNOWN,
+            reason_code=FailureReasonCode.UNKNOWN,
+            detail=runtime_support.summary,
+        )
+        report = SessionReport(
+            state=SessionState.FAILED,
+            failure_class=FailureClass.UNKNOWN,
+            reason_code=FailureReasonCode.UNKNOWN,
+            detail=runtime_support.summary,
+        )
+    else:
+        report = orchestrator.connect(manifest)
+        if args.reconnect_once and report.state is SessionState.CONNECTED:
+            report = orchestrator.reconnect(manifest)
     effective_session_health_policy = orchestrator.policy_engine.resolve_session_health_policy(
         manifest,
         client_platform=client_platform,
@@ -313,7 +340,12 @@ def main() -> int:
         if args.auto_reconnect_on_health_failure is not None
         else effective_session_health_policy.auto_reconnect
     )
-    if effective_health_checks > 0 and report.state is SessionState.CONNECTED:
+    runtime_tick_limit = (
+        max(args.reevaluate_pending_transports, 1)
+        if args.reevaluate_pending_transports is not None and args.reevaluate_pending_transports > 0
+        else resolved_runtime_tick_policy.reevaluate_pending_transports_limit
+    )
+    if not runtime_support_gate_blocked and effective_health_checks > 0 and report.state is SessionState.CONNECTED:
         monitored = orchestrator.monitor_connection(
             manifest,
             checks=effective_health_checks,
@@ -322,18 +354,18 @@ def main() -> int:
         if monitored is not None:
             report = monitored
     reenabled_transports: list[str] = []
-    if args.reevaluate_pending_transports > 0:
+    if not runtime_support_gate_blocked and args.reevaluate_pending_transports is not None and args.reevaluate_pending_transports > 0:
         reenabled_transports = orchestrator.reevaluate_pending_transports(
             manifest,
-            limit=args.reevaluate_pending_transports,
+            limit=max(args.reevaluate_pending_transports, 1),
         )
     runtime_tick_reports: list[dict] = []
-    if args.runtime_ticks > 0:
+    if not runtime_support_gate_blocked and args.runtime_ticks > 0:
         for _ in range(args.runtime_ticks):
             tick_report = orchestrator.runtime_tick(
                 manifest,
                 policy=RuntimeTickPolicy(
-                    reevaluate_pending_transports_limit=max(args.reevaluate_pending_transports, 1),
+                    reevaluate_pending_transports_limit=runtime_tick_limit,
                 ),
             )
             runtime_tick_reports.append(
@@ -344,12 +376,12 @@ def main() -> int:
                 }
             )
     supervisor_cycles: list[dict] = []
-    if args.supervisor_cycles > 0:
+    if not runtime_support_gate_blocked and args.supervisor_cycles > 0:
         supervisor_report = supervisor.run_cycles(
             manifest,
             num_cycles=args.supervisor_cycles,
             tick_policy=RuntimeTickPolicy(
-                reevaluate_pending_transports_limit=max(args.reevaluate_pending_transports, 1),
+                reevaluate_pending_transports_limit=runtime_tick_limit,
             ),
         )
         supervisor_cycles = [
@@ -380,9 +412,13 @@ def main() -> int:
         print(f"tunnel_mode={report.applied_tunnel_mode}")
     print(f"session_health_checks={effective_health_checks}")
     print(f"session_health_auto_reconnect={effective_auto_reconnect}")
+    print(f"session_health_failure_threshold={effective_session_health_policy.failure_threshold}")
+    print(f"runtime_tick_reevaluate_pending_transports_limit={runtime_tick_limit}")
     print(f"runtime_support_tier={runtime_support.tier}")
     print(f"runtime_support_summary={runtime_support.summary}")
     print(f"runtime_support_in_mvp_scope={runtime_support.in_mvp_scope}")
+    if runtime_support_gate_blocked:
+        print("runtime_support_gate_blocked=true")
     if runtime_support.caveats:
         print(f"runtime_support_caveats={' | '.join(runtime_support.caveats)}")
     print(f"kill_switch_active={report.kill_switch_active}")
@@ -485,6 +521,7 @@ def main() -> int:
                 "last_connected_endpoint_id": state_manager.state.last_connected_endpoint_id,
                 "session_health_checks": effective_health_checks,
                 "session_health_auto_reconnect": effective_auto_reconnect,
+                "session_health_failure_threshold": effective_session_health_policy.failure_threshold,
                 "runtime_support": {
                     "tier": runtime_support.tier,
                     "summary": runtime_support.summary,
@@ -503,9 +540,18 @@ def main() -> int:
                         else None
                     ),
                 },
+                "runtime_support_policy_resolved": {
+                    "enforce_contract_match": resolved_runtime_support_policy.enforce_contract_match,
+                    "allow_contract_mismatch": args.allow_runtime_contract_mismatch,
+                    "gate_blocked": runtime_support_gate_blocked,
+                },
+                "runtime_tick_policy_resolved": {
+                    "reevaluate_pending_transports_limit": runtime_tick_limit,
+                },
                 "session_health_policy_resolved": {
                     "checks": effective_health_checks,
                     "auto_reconnect": effective_auto_reconnect,
+                    "failure_threshold": effective_session_health_policy.failure_threshold,
                 },
                 "transport_reenable_policy_resolved": resolved_transport_reenable_policy,
                 "transport_failure_policy_resolved": resolved_transport_failure_policy,
@@ -597,6 +643,8 @@ def main() -> int:
         )
         print(f"support_bundle={args.support_bundle}")
 
+    if runtime_support_gate_blocked:
+        return 2
     return 0 if report.state is SessionState.CONNECTED else 1
 
 

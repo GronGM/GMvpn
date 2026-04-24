@@ -233,7 +233,8 @@ Signed manifests can now carry a bounded `features.session_health_policy` block 
   "session_health_policy": {
     "default": {
       "checks": 1,
-      "auto_reconnect": false
+      "auto_reconnect": false,
+      "failure_threshold": 3
     },
     "by_client_platform": {
       "android": {
@@ -255,7 +256,8 @@ Rules:
 - `by_client_platform` overrides it for one client target such as `android` or `ios`;
 - `by_transport` overrides it for one transport such as `https` or `wireguard`;
 - `checks` must stay in the bounded range `0..10`;
-- `auto_reconnect` is a boolean.
+- `auto_reconnect` is a boolean;
+- `failure_threshold` must stay in the bounded range `1..5`.
 
 CLI behavior is tri-state:
 
@@ -263,7 +265,33 @@ CLI behavior is tri-state:
 - if `--auto-reconnect-on-health-failure` or `--no-auto-reconnect-on-health-failure` is omitted, the client uses the resolved manifest value;
 - if either flag is passed locally, that local value wins for the current run.
 
-The CLI prints the resolved values as `session_health_checks` and `session_health_auto_reconnect`.
+The CLI prints the resolved values as `session_health_checks`, `session_health_auto_reconnect`, and `session_health_failure_threshold`.
+
+The manifest can also carry two small runtime contracts for release-facing maintenance semantics:
+
+```json
+{
+  "features": {
+    "runtime_support_policy": {
+      "default": {
+        "enforce_contract_match": true
+      }
+    },
+    "runtime_tick_policy": {
+      "default": {
+        "reevaluate_pending_transports_limit": 1
+      }
+    }
+  }
+}
+```
+
+Rules:
+
+- `runtime_support_policy.default.enforce_contract_match` is boolean;
+- when it is `true`, a `contract-mismatch` runtime support assessment blocks startup unless the operator passes `--allow-runtime-contract-mismatch`;
+- `runtime_tick_policy.default.reevaluate_pending_transports_limit` must stay in the bounded range `1..5`;
+- `--reevaluate-pending-transports` remains a local one-shot override for the current run.
 
 The manifest can also bound the background transport re-enable backoff:
 
@@ -331,6 +359,9 @@ The support bundle now exports the effective monitoring policy and the persisten
 
 - `session_health_checks`
 - `session_health_auto_reconnect`
+- `session_health_failure_threshold`
+- `runtime_support_policy_resolved`
+- `runtime_tick_policy_resolved`
 - `session_health_policy_resolved`
 - `transport_reenable_policy_resolved`
 - `transport_failure_policy_resolved`

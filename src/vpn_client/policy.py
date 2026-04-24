@@ -5,6 +5,7 @@ from dataclasses import dataclass, replace
 from vpn_client.client_platform import ClientPlatform
 from vpn_client.state import StateManager
 from vpn_client.models import DnsMode, FailureClass, Manifest, NetworkPolicy, TunnelMode
+from vpn_client.runtime_tick import RuntimeTickPolicy
 
 
 @dataclass(slots=True)
@@ -17,6 +18,12 @@ class IncidentGuidance:
 class SessionHealthPolicy:
     checks: int = 0
     auto_reconnect: bool = False
+    failure_threshold: int = 3
+
+
+@dataclass(slots=True)
+class RuntimeSupportPolicy:
+    enforce_contract_match: bool = False
 
 
 @dataclass(slots=True)
@@ -93,6 +100,38 @@ def validate_session_health_policy(policy: object) -> None:
             )
 
 
+def validate_runtime_support_policy(policy: object) -> None:
+    if not isinstance(policy, dict):
+        raise ValueError("runtime_support_policy must be an object")
+
+    allowed_keys = {"default"}
+    unexpected = set(policy) - allowed_keys
+    if unexpected:
+        raise ValueError(f"runtime_support_policy contains unsupported keys: {', '.join(sorted(unexpected))}")
+
+    if "default" in policy:
+        _validate_runtime_support_policy_override(
+            policy["default"],
+            context="runtime_support_policy.default",
+        )
+
+
+def validate_runtime_tick_policy(policy: object) -> None:
+    if not isinstance(policy, dict):
+        raise ValueError("runtime_tick_policy must be an object")
+
+    allowed_keys = {"default"}
+    unexpected = set(policy) - allowed_keys
+    if unexpected:
+        raise ValueError(f"runtime_tick_policy contains unsupported keys: {', '.join(sorted(unexpected))}")
+
+    if "default" in policy:
+        _validate_runtime_tick_policy_override(
+            policy["default"],
+            context="runtime_tick_policy.default",
+        )
+
+
 def validate_transport_reenable_policy(policy: object) -> None:
     if not isinstance(policy, dict):
         raise ValueError("transport_reenable_policy must be an object")
@@ -153,7 +192,7 @@ def _validate_session_health_policy_override(override: object, context: str) -> 
     if not isinstance(override, dict):
         raise ValueError(f"{context} must be an object")
 
-    allowed_keys = {"checks", "auto_reconnect"}
+    allowed_keys = {"checks", "auto_reconnect", "failure_threshold"}
     unexpected = set(override) - allowed_keys
     if unexpected:
         raise ValueError(f"{context} contains unsupported keys: {', '.join(sorted(unexpected))}")
@@ -165,6 +204,48 @@ def _validate_session_health_policy_override(override: object, context: str) -> 
     auto_reconnect = override.get("auto_reconnect")
     if auto_reconnect is not None and not isinstance(auto_reconnect, bool):
         raise ValueError(f"{context}.auto_reconnect must be a boolean")
+
+    failure_threshold = override.get("failure_threshold")
+    if failure_threshold is not None and (
+        not isinstance(failure_threshold, int)
+        or isinstance(failure_threshold, bool)
+        or failure_threshold < 1
+        or failure_threshold > 5
+    ):
+        raise ValueError(f"{context}.failure_threshold must be an integer between 1 and 5")
+
+
+def _validate_runtime_support_policy_override(override: object, context: str) -> None:
+    if not isinstance(override, dict):
+        raise ValueError(f"{context} must be an object")
+
+    allowed_keys = {"enforce_contract_match"}
+    unexpected = set(override) - allowed_keys
+    if unexpected:
+        raise ValueError(f"{context} contains unsupported keys: {', '.join(sorted(unexpected))}")
+
+    enforce_contract_match = override.get("enforce_contract_match")
+    if enforce_contract_match is not None and not isinstance(enforce_contract_match, bool):
+        raise ValueError(f"{context}.enforce_contract_match must be a boolean")
+
+
+def _validate_runtime_tick_policy_override(override: object, context: str) -> None:
+    if not isinstance(override, dict):
+        raise ValueError(f"{context} must be an object")
+
+    allowed_keys = {"reevaluate_pending_transports_limit"}
+    unexpected = set(override) - allowed_keys
+    if unexpected:
+        raise ValueError(f"{context} contains unsupported keys: {', '.join(sorted(unexpected))}")
+
+    limit = override.get("reevaluate_pending_transports_limit")
+    if limit is not None and (
+        not isinstance(limit, int)
+        or isinstance(limit, bool)
+        or limit < 1
+        or limit > 5
+    ):
+        raise ValueError(f"{context}.reevaluate_pending_transports_limit must be an integer between 1 and 5")
 
 
 def _validate_transport_reenable_policy_override(override: object, context: str) -> None:
@@ -314,6 +395,22 @@ class PolicyEngine:
             )
         return resolved
 
+    def resolve_runtime_support_policy(self, manifest: Manifest) -> RuntimeSupportPolicy:
+        resolved = RuntimeSupportPolicy()
+        raw_policy = manifest.features.get("runtime_support_policy")
+        if not isinstance(raw_policy, dict):
+            return resolved
+
+        return _merge_runtime_support_policy(resolved, raw_policy.get("default"))
+
+    def resolve_runtime_tick_policy(self, manifest: Manifest) -> RuntimeTickPolicy:
+        resolved = RuntimeTickPolicy()
+        raw_policy = manifest.features.get("runtime_tick_policy")
+        if not isinstance(raw_policy, dict):
+            return resolved
+
+        return _merge_runtime_tick_policy(resolved, raw_policy.get("default"))
+
     def resolve_transport_reenable_policy(
         self,
         manifest: Manifest,
@@ -427,6 +524,31 @@ def _merge_session_health_policy(base: SessionHealthPolicy, override: object) ->
         merged = replace(merged, checks=override["checks"])
     if "auto_reconnect" in override:
         merged = replace(merged, auto_reconnect=override["auto_reconnect"])
+    if "failure_threshold" in override:
+        merged = replace(merged, failure_threshold=override["failure_threshold"])
+    return merged
+
+
+def _merge_runtime_support_policy(base: RuntimeSupportPolicy, override: object) -> RuntimeSupportPolicy:
+    if not isinstance(override, dict):
+        return base
+
+    merged = base
+    if "enforce_contract_match" in override:
+        merged = replace(merged, enforce_contract_match=override["enforce_contract_match"])
+    return merged
+
+
+def _merge_runtime_tick_policy(base: RuntimeTickPolicy, override: object) -> RuntimeTickPolicy:
+    if not isinstance(override, dict):
+        return base
+
+    merged = base
+    if "reevaluate_pending_transports_limit" in override:
+        merged = replace(
+            merged,
+            reevaluate_pending_transports_limit=override["reevaluate_pending_transports_limit"],
+        )
     return merged
 
 

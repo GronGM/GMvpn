@@ -479,7 +479,7 @@ class SessionOrchestrator:
         if not self.state_manager:
             return RuntimeTickReport(reenabled_transports=[], pending_ready_transports=[], pending_total=0)
 
-        tick_policy = policy or RuntimeTickPolicy()
+        tick_policy = policy or self.policy_engine.resolve_runtime_tick_policy(manifest)
         pending_ready = self.state_manager.ready_transports_for_reenable()
         pending_total = len(self.state_manager.pending_transports_for_reenable())
         self.telemetry.record(
@@ -583,6 +583,11 @@ class SessionOrchestrator:
             endpoint,
             HealthPolicy(checks=checks, auto_reconnect=auto_reconnect),
         )
+        session_health_policy = self.policy_engine.resolve_session_health_policy(
+            manifest,
+            client_platform=self.client_platform,
+            transport=endpoint.transport,
+        )
         for report in reports:
             if report.healthy:
                 had_pending_failure = False
@@ -652,7 +657,7 @@ class SessionOrchestrator:
                 confirmed_failure = self.state_manager.record_session_health_failure(
                     report.failure_class,
                     report.reason_code,
-                    threshold=3,
+                    threshold=session_health_policy.failure_threshold,
                 )
 
             failure_detail = report.detail
@@ -668,7 +673,10 @@ class SessionOrchestrator:
                     reason_code=report.reason_code,
                     endpoint_id=endpoint.id,
                     transport=endpoint.transport,
-                    detail=f"{failure_detail}; streak={pending_streak}/3",
+                    detail=(
+                        f"{failure_detail}; "
+                        f"streak={pending_streak}/{session_health_policy.failure_threshold}"
+                    ),
                 )
                 continue
 

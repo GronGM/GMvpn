@@ -29,6 +29,8 @@ from vpn_client.models import (
 )
 from vpn_client.policy import (
     validate_incident_guidance_overrides,
+    validate_runtime_support_policy,
+    validate_runtime_tick_policy,
     validate_session_health_policy,
     validate_transport_failure_policy,
     validate_transport_reenable_policy,
@@ -120,6 +122,18 @@ def validate_manifest(manifest: Manifest) -> None:
     if session_health_policy is not None:
         try:
             validate_session_health_policy(session_health_policy)
+        except ValueError as exc:
+            raise ManifestError(str(exc)) from exc
+    runtime_support_policy = manifest.features.get("runtime_support_policy")
+    if runtime_support_policy is not None:
+        try:
+            validate_runtime_support_policy(runtime_support_policy)
+        except ValueError as exc:
+            raise ManifestError(str(exc)) from exc
+    runtime_tick_policy = manifest.features.get("runtime_tick_policy")
+    if runtime_tick_policy is not None:
+        try:
+            validate_runtime_tick_policy(runtime_tick_policy)
         except ValueError as exc:
             raise ManifestError(str(exc)) from exc
     transport_reenable_policy = manifest.features.get("transport_reenable_policy")

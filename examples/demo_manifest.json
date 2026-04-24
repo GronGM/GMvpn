@@ -59,7 +59,24 @@
   },
   "features": {
     "remote_disable_quic": false,
-    "support_bundle_enabled": true
+    "support_bundle_enabled": true,
+    "runtime_support_policy": {
+      "default": {
+        "enforce_contract_match": true
+      }
+    },
+    "runtime_tick_policy": {
+      "default": {
+        "reevaluate_pending_transports_limit": 1
+      }
+    },
+    "session_health_policy": {
+      "default": {
+        "checks": 0,
+        "auto_reconnect": false,
+        "failure_threshold": 3
+      }
+    }
   },
   "network_policy": {
     "tunnel_mode": "full",

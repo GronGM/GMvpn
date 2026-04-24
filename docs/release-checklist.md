@@ -37,6 +37,7 @@ It is intentionally narrower than a full cross-platform product release.
 - Confirm manifest verification still requires valid signatures.
 - Confirm `schema_version` and `provider_profile_schema_version` handling matches [schema-compatibility.md](./schema-compatibility.md).
 - Confirm `features.session_health_policy` validation still accepts only bounded values.
+- Confirm `features.runtime_support_policy` and `features.runtime_tick_policy` validation still accepts only bounded values.
 - Confirm provider-profile compilation and endpoint targeting still validate correctly.
 - Confirm no release change widens provider contract behavior without corresponding compatibility notes.
 
@@ -60,14 +61,18 @@ It is intentionally narrower than a full cross-platform product release.
   - `endpoint_health`
   - `dataplane_runtime`
   - `runtime_support`
+  - `runtime_support_policy_resolved`
+  - `runtime_tick_policy_resolved`
   - `session_health_policy_resolved`
   - `transport_reenable_policy_resolved`
   - `transport_failure_policy_resolved`
   - `linux_execution`
   - `linux_reconciliation.failure_reason_code`
 - Confirm `runtime_support.tier` and `runtime_support.in_mvp_scope` are present.
+- Confirm `runtime_support_policy_resolved.gate_blocked` and `runtime_tick_policy_resolved.reevaluate_pending_transports_limit` are present.
 - Confirm `endpoint_health[*].last_reason_code` and transport soft-failure buckets are present.
 - Confirm background re-enable policy values are bounded and visible for the transports you expect to support.
+- Confirm `session_health_failure_threshold` and `session_health_policy_resolved.failure_threshold` are present.
 - Confirm crash and soft-failure disable policy values are bounded and visible for the transports you expect to support.
 - Confirm `incident_summary.primary_transport_issue` is populated for degraded scenarios where one transport is the obvious local focus.
 - Confirm bundle output remains bounded and does not dump unreviewed sensitive material.
