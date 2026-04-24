@@ -76,6 +76,12 @@ The baseline automated gate runs:
 - `python -m compileall src tests`
 - `PYTHONPATH=src python -m unittest discover -s tests -v`
 
+Before cutting or reviewing a release candidate, you can also run the compact repo guardrail:
+
+- `python tools/release_guardrail.py`
+- `python tools/release_guardrail.py --allow-dirty-tree`
+- `python tools/release_guardrail.py --run-local-checks`
+
 Linux-first network planning stays in dry-run mode by default and prints the command plan it would apply.
 The data-plane backends also stay in dry-run mode by default and print the command they would launch.
 
