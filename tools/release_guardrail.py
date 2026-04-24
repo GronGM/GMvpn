@@ -17,7 +17,9 @@ from vpn_client.linux import LinuxNetworkStack
 from vpn_client.models import DnsMode, Endpoint, NetworkPolicy, PlatformCapability, TunnelMode
 from vpn_client.runtime_support import assess_runtime_support
 from vpn_client.client_platform import ClientPlatform
+from vpn_client.config import canonical_manifest_bytes
 from vpn_client.xray import XrayCoreDataPlane
+from vpn_client.security import generate_keypair, sign_payload
 
 
 CI_WORKFLOW = ROOT / ".github" / "workflows" / "ci.yml"
@@ -98,6 +100,303 @@ def _run_local_checks() -> list[str]:
                 f"stderr:\n{result.stderr}"
             )
     return failures
+
+
+def _run_cli_and_collect(*args: str, state_payload: dict | None = None) -> tuple[int, str, dict[str, object]]:
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp_path = Path(tmp)
+        private_pem, public_pem = generate_keypair()
+        manifest = json.loads(_read_text(DEMO_MANIFEST))
+        manifest["signature"] = sign_payload(private_pem, canonical_manifest_bytes(manifest))
+
+        manifest_path = tmp_path / "manifest.json"
+        public_key_path = tmp_path / "public.pem"
+        support_bundle_path = tmp_path / "bundle.json"
+        state_path = tmp_path / "state.json"
+        backend_state_path = tmp_path / "backend-state.json"
+        runtime_marker_path = tmp_path / "runtime-marker.json"
+
+        manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+        public_key_path.write_bytes(public_pem)
+        if state_payload is not None:
+            state_path.write_text(json.dumps(state_payload), encoding="utf-8")
+
+        command = [
+            sys.executable,
+            "-m",
+            "vpn_client.cli",
+            "--manifest",
+            str(manifest_path),
+            "--public-key",
+            str(public_key_path),
+            "--cache-dir",
+            str(tmp_path / "cache"),
+            "--state-file",
+            str(state_path),
+            "--runtime-marker",
+            str(runtime_marker_path),
+            "--backend-state-file",
+            str(backend_state_path),
+            "--support-bundle",
+            str(support_bundle_path),
+            *args,
+        ]
+        result = subprocess.run(
+            command,
+            cwd=ROOT,
+            text=True,
+            capture_output=True,
+            env={**os.environ, "PYTHONPATH": str(ROOT / "src")},
+            check=False,
+        )
+        bundle = json.loads(support_bundle_path.read_text(encoding="utf-8"))
+        return result.returncode, result.stdout, bundle
+
+
+def _parse_cli_output(stdout: str) -> dict[str, object]:
+    parsed: dict[str, object] = {}
+    incident_summary: dict[str, object] = {}
+    in_incident_summary = False
+    for raw_line in stdout.splitlines():
+        line = raw_line.rstrip()
+        if line == "incident_summary:":
+            in_incident_summary = True
+            continue
+        if in_incident_summary:
+            if not line.startswith("  - "):
+                in_incident_summary = False
+            else:
+                key, _, value = line[4:].partition("=")
+                if key == "primary_transport_issue":
+                    incident_summary[key] = _parse_primary_transport_issue(value)
+                else:
+                    incident_summary[key] = value
+                continue
+        if "=" in line and not line.startswith("  - "):
+            key, value = line.split("=", 1)
+            parsed[key] = value
+    if incident_summary:
+        parsed["incident_summary"] = incident_summary
+    return parsed
+
+
+def _parse_primary_transport_issue(value: str) -> dict[str, object]:
+    tokens = value.split()
+    issue = {"transport": tokens[0] if tokens else ""}
+    for token in tokens[1:]:
+        key, _, item_value = token.partition("=")
+        issue[key] = item_value
+    return issue
+
+
+def _check_release_artifact_policy() -> list[str]:
+    failures: list[str] = []
+
+    connected_state = {
+        "endpoint_health": {},
+        "last_connected_endpoint_id": None,
+        "incident_flags": {"disable_transport_https": False},
+        "incident_flag_expires_at": {"disable_transport_https": "2020-01-01T00:00:00+00:00"},
+        "transport_crash_streaks": {},
+        "transport_crash_buckets": {},
+        "transport_crash_reasons": {},
+        "transport_soft_fail_streaks": {},
+        "transport_soft_fail_buckets": {},
+        "transport_reenable_pending": {"https": True},
+        "transport_reenable_not_before": {"https": "2020-01-01T00:00:00+00:00"},
+        "transport_reenable_fail_streaks": {},
+        "session_health_fail_streak": 0,
+        "session_health_fail_bucket": "",
+    }
+    returncode, stdout, bundle = _run_cli_and_collect(
+        "--platform",
+        "simulated",
+        "--dataplane",
+        "null",
+        "--runtime-ticks",
+        "1",
+        state_payload=connected_state,
+    )
+    if returncode != 0:
+        return [f"artifact policy parity: connected CLI scenario failed with exit code {returncode}"]
+    parsed = _parse_cli_output(stdout)
+    extra = bundle["extra"]
+
+    connected_pairs = (
+        ("session_health_checks", str(extra["session_health_checks"])),
+        ("session_health_auto_reconnect", str(extra["session_health_auto_reconnect"])),
+        ("session_health_failure_threshold", str(extra["session_health_failure_threshold"])),
+        (
+            "runtime_tick_reevaluate_pending_transports_limit",
+            str(extra["runtime_tick_policy_resolved"]["reevaluate_pending_transports_limit"]),
+        ),
+        ("runtime_support_tier", str(extra["runtime_support"]["tier"])),
+        ("runtime_support_in_mvp_scope", str(extra["runtime_support"]["in_mvp_scope"])),
+    )
+    for key, expected in connected_pairs:
+        actual = parsed.get(key)
+        if actual != expected:
+            failures.append(
+                f"artifact policy parity: CLI field '{key}' was '{actual}', expected '{expected}' from support bundle"
+            )
+
+    if bool(extra["runtime_support_policy_resolved"]["gate_blocked"]):
+        failures.append("artifact policy parity: connected CLI scenario unexpectedly reported runtime_support gate blocked")
+
+    degraded_manifest = {
+        "version": 1,
+        "generated_at": "2026-04-23T00:00:00Z",
+        "expires_at": "2026-04-30T00:00:00Z",
+        "schema_version": 1,
+        "features": {
+            "support_bundle_enabled": True,
+            "runtime_support_policy": {
+                "default": {"enforce_contract_match": False},
+            },
+            "runtime_tick_policy": {
+                "default": {"reevaluate_pending_transports_limit": 2},
+            },
+            "session_health_policy": {
+                "default": {"checks": 0, "auto_reconnect": False, "failure_threshold": 2},
+            },
+        },
+        "transport_policy": {
+            "preferred_order": ["quic"],
+            "connect_timeout_ms": 2500,
+            "retry_budget": 1,
+            "probe_timeout_ms": 1000,
+        },
+        "network_policy": {
+            "tunnel_mode": "full",
+            "dns_mode": "vpn_only",
+            "kill_switch_enabled": True,
+            "ipv6_enabled": False,
+            "allow_lan_while_connected": False,
+        },
+        "endpoints": [
+            {
+                "id": "quic-1",
+                "host": "198.51.100.30",
+                "port": 443,
+                "transport": "quic",
+                "region": "eu-central",
+                "tags": [],
+                "metadata": {"simulated_failure": "tls"},
+            }
+        ],
+    }
+    degraded_state = {
+        "endpoint_health": {},
+        "last_connected_endpoint_id": None,
+        "incident_flags": {},
+        "incident_flag_expires_at": {},
+        "transport_crash_streaks": {},
+        "transport_crash_buckets": {},
+        "transport_crash_reasons": {},
+        "transport_soft_fail_streaks": {"quic": 1},
+        "transport_soft_fail_buckets": {"quic": "tls_interference:tls_handshake_failed"},
+        "transport_reenable_pending": {},
+        "transport_reenable_not_before": {},
+        "transport_reenable_fail_streaks": {},
+        "session_health_fail_streak": 0,
+        "session_health_fail_bucket": "",
+    }
+    returncode, stdout, bundle = _run_custom_cli_and_collect(
+        degraded_manifest,
+        state_payload=degraded_state,
+        args=("--platform", "simulated", "--dataplane", "null"),
+    )
+    if returncode != 1:
+        failures.append(f"artifact policy parity: degraded CLI scenario returned {returncode}, expected 1")
+        return failures
+    parsed = _parse_cli_output(stdout)
+    extra = bundle["extra"]
+    incident_summary = parsed.get("incident_summary")
+    if not isinstance(incident_summary, dict):
+        failures.append("artifact policy parity: degraded CLI scenario did not print incident_summary block")
+        return failures
+
+    incident_pairs = (
+        ("severity", str(extra["incident_summary"]["severity"])),
+        ("failure_class", str(extra["incident_summary"]["failure_class"])),
+    )
+    for key, expected in incident_pairs:
+        actual = incident_summary.get(key)
+        if actual != expected:
+            failures.append(
+                f"artifact policy parity: CLI incident field '{key}' was '{actual}', expected '{expected}' from support bundle"
+            )
+
+    primary_issue = incident_summary.get("primary_transport_issue")
+    bundle_primary_issue = extra["incident_summary"]["primary_transport_issue"]
+    if not isinstance(primary_issue, dict) or not isinstance(bundle_primary_issue, dict):
+        failures.append("artifact policy parity: degraded CLI scenario did not preserve primary_transport_issue")
+    else:
+        for key in ("transport", "soft_fail_bucket"):
+            actual = str(primary_issue.get(key))
+            expected = str(bundle_primary_issue.get(key))
+            if actual != expected:
+                failures.append(
+                    "artifact policy parity: CLI incident primary_transport_issue "
+                    f"'{key}' was '{actual}', expected '{expected}' from support bundle"
+                )
+
+    return failures
+
+
+def _run_custom_cli_and_collect(
+    manifest: dict[str, object],
+    *,
+    args: tuple[str, ...],
+    state_payload: dict | None = None,
+) -> tuple[int, str, dict[str, object]]:
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp_path = Path(tmp)
+        private_pem, public_pem = generate_keypair()
+        manifest["signature"] = sign_payload(private_pem, canonical_manifest_bytes(manifest))
+
+        manifest_path = tmp_path / "manifest.json"
+        public_key_path = tmp_path / "public.pem"
+        support_bundle_path = tmp_path / "bundle.json"
+        state_path = tmp_path / "state.json"
+        backend_state_path = tmp_path / "backend-state.json"
+        runtime_marker_path = tmp_path / "runtime-marker.json"
+
+        manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+        public_key_path.write_bytes(public_pem)
+        if state_payload is not None:
+            state_path.write_text(json.dumps(state_payload), encoding="utf-8")
+
+        command = [
+            sys.executable,
+            "-m",
+            "vpn_client.cli",
+            "--manifest",
+            str(manifest_path),
+            "--public-key",
+            str(public_key_path),
+            "--cache-dir",
+            str(tmp_path / "cache"),
+            "--state-file",
+            str(state_path),
+            "--runtime-marker",
+            str(runtime_marker_path),
+            "--backend-state-file",
+            str(backend_state_path),
+            "--support-bundle",
+            str(support_bundle_path),
+            *args,
+        ]
+        result = subprocess.run(
+            command,
+            cwd=ROOT,
+            text=True,
+            capture_output=True,
+            env={**os.environ, "PYTHONPATH": str(ROOT / "src")},
+            check=False,
+        )
+        bundle = json.loads(support_bundle_path.read_text(encoding="utf-8"))
+        return result.returncode, result.stdout, bundle
 
 
 def _check_linux_xray_smoke_gate() -> list[str]:
@@ -216,6 +515,7 @@ def main() -> int:
             failures.extend(_check_git_clean())
         failures.extend(_check_cache_not_tracked())
         failures.extend(_check_linux_xray_smoke_gate())
+        failures.extend(_check_release_artifact_policy())
         if args.run_local_checks:
             failures.extend(_run_local_checks())
 
@@ -230,6 +530,7 @@ def main() -> int:
     print("- release checklist still documents the same local gates")
     print("- working tree is clean and .cache is not tracked")
     print("- linux+xray MVP contour smoke gate passed")
+    print("- CLI and support bundle stay aligned on release-facing policy and incident facts")
     if args.run_local_checks:
         print("- local compileall and unittest checks passed")
     return 0
