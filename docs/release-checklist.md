@@ -27,6 +27,7 @@ It is intentionally narrower than a full cross-platform product release.
 ## CI And Local Verification
 
 - Confirm GitHub Actions `CI` is green for the release candidate.
+- Run `python tools/release_guardrail.py`.
 - Run `python -m compileall src tests`.
 - Run `PYTHONPATH=src python -m unittest discover -s tests -v`.
 - Confirm the runtime support assessment still marks `linux + xray-core + linux adapter` as `mvp-supported`.
