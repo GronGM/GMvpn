@@ -4,6 +4,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from vpn_client.backend_state import BackendStateRecord, BackendStateStore
 from vpn_client.dataplane import NullDataPlane
 from vpn_client.linux import LinuxNetworkStack
 from vpn_client.platform import SimulatedNetworkStack
@@ -58,6 +59,46 @@ class StartupRecoveryTests(unittest.TestCase):
             self.assertIn("state penalty applied", report.actions)
             self.assertTrue(state_manager.is_cooling_down("edge-1"))
             self.assertEqual(state_manager.transport_crash_streak("https"), 1)
+
+    def test_recovery_skips_penalty_when_backend_state_shows_orderly_stop(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            runtime = RuntimeState(tmp_path / "marker.json")
+            runtime.mark_active("edge-1", "https")
+            state_manager = StateManager(StateStore(tmp_path / "state.json"))
+            backend_state_store = BackendStateStore(tmp_path / "backend-state.json")
+            backend_state_store.save(
+                BackendStateRecord(
+                    backend="linux-userspace",
+                    endpoint_id="edge-1",
+                    pid=41001,
+                    active=False,
+                    started_at="2026-04-23T00:00:00+00:00",
+                    stopped_at="2026-04-23T00:05:00+00:00",
+                    command=["vpn-backend"],
+                    restart_count=0,
+                    crashed=False,
+                    crash_reason=None,
+                    last_exit_code=0,
+                    stdout_tail="",
+                    stderr_tail="",
+                )
+            )
+            recovery = StartupRecovery(
+                runtime,
+                SimulatedNetworkStack(),
+                NullDataPlane(),
+                TelemetryRecorder(),
+                state_manager=state_manager,
+                backend_state_store=backend_state_store,
+            )
+
+            report = recovery.recover(cleanup_stale_runtime=True)
+
+            self.assertTrue(report.stale_marker_found)
+            self.assertIn("state penalty skipped after orderly shutdown signal", report.actions)
+            self.assertFalse(state_manager.is_cooling_down("edge-1"))
+            self.assertEqual(state_manager.transport_crash_streak("https"), 0)
 
 
 if __name__ == "__main__":
