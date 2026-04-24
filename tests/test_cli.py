@@ -264,6 +264,15 @@ class CliTests(unittest.TestCase):
                 "generated_at": "2026-04-23T00:00:00Z",
                 "expires_at": "2026-04-30T00:00:00Z",
                 "features": {"support_bundle_enabled": True},
+                "platform_capabilities": {
+                    "linux": {
+                        "platform": "linux",
+                        "supported_dataplanes": ["xray-core", "routed"],
+                        "network_adapter": "linux",
+                        "status": "mvp-supported",
+                        "notes": "Primary MVP contour.",
+                    }
+                },
                 "transport_policy": {
                     "preferred_order": ["https"],
                     "connect_timeout_ms": 2500,
@@ -338,6 +347,99 @@ class CliTests(unittest.TestCase):
             self.assertIn("runtime_support_in_mvp_scope=True", output)
             self.assertEqual(payload["extra"]["runtime_support"]["tier"], "mvp-supported")
             self.assertTrue(payload["extra"]["runtime_support"]["in_mvp_scope"])
+            self.assertEqual(payload["extra"]["runtime_support"]["declared_platform_capability"]["status"], "mvp-supported")
+
+    def test_cli_marks_linux_xray_runtime_as_contract_mismatch_when_manifest_disagrees(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            private_pem, public_pem = generate_keypair()
+            manifest = {
+                "version": 1,
+                "generated_at": "2026-04-23T00:00:00Z",
+                "expires_at": "2026-04-30T00:00:00Z",
+                "features": {"support_bundle_enabled": True},
+                "platform_capabilities": {
+                    "linux": {
+                        "platform": "linux",
+                        "supported_dataplanes": ["linux-userspace", "routed"],
+                        "network_adapter": "linux",
+                        "status": "prototype",
+                        "notes": "Older contour declaration.",
+                    }
+                },
+                "transport_policy": {
+                    "preferred_order": ["https"],
+                    "connect_timeout_ms": 2500,
+                    "retry_budget": 1,
+                    "probe_timeout_ms": 1000,
+                },
+                "network_policy": {
+                    "tunnel_mode": "full",
+                    "dns_mode": "vpn_only",
+                    "kill_switch_enabled": True,
+                    "ipv6_enabled": False,
+                    "allow_lan_while_connected": False,
+                },
+                "endpoints": [
+                    {
+                        "id": "desktop-1",
+                        "host": "198.51.100.50",
+                        "port": 443,
+                        "transport": "https",
+                        "region": "eu-central",
+                        "tags": [],
+                        "metadata": {
+                            "dataplane": "xray-core",
+                            "xray_protocol": "vless",
+                            "xray_user_id": "11111111-1111-1111-1111-111111111111",
+                            "xray_stream_network": "tcp",
+                            "xray_security": "tls",
+                            "xray_server_name": "cdn.example.net",
+                            "supported_client_platforms": ["linux"],
+                        },
+                    }
+                ],
+            }
+            manifest["signature"] = sign_payload(private_pem, canonical_manifest_bytes(manifest))
+            manifest_path = tmp_path / "manifest.json"
+            public_key_path = tmp_path / "public.pem"
+            manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+            public_key_path.write_bytes(public_pem)
+            stdout = io.StringIO()
+
+            argv = [
+                "vpn-client",
+                "--manifest",
+                str(manifest_path),
+                "--public-key",
+                str(public_key_path),
+                "--cache-dir",
+                str(tmp_path / "cache"),
+                "--state-file",
+                str(tmp_path / "state.json"),
+                "--runtime-marker",
+                str(tmp_path / "runtime-marker.json"),
+                "--backend-state-file",
+                str(tmp_path / "backend-state.json"),
+                "--support-bundle",
+                str(tmp_path / "bundle.json"),
+                "--platform",
+                "linux",
+                "--client-platform",
+                "linux",
+                "--dataplane",
+                "xray-core",
+            ]
+
+            with patch("sys.argv", argv), contextlib.redirect_stdout(stdout):
+                exit_code = cli.main()
+
+            output = stdout.getvalue()
+            payload = json.loads((tmp_path / "bundle.json").read_text(encoding="utf-8"))
+            self.assertEqual(exit_code, 0)
+            self.assertIn("runtime_support_tier=contract-mismatch", output)
+            self.assertEqual(payload["extra"]["runtime_support"]["tier"], "contract-mismatch")
+            self.assertFalse(payload["extra"]["runtime_support"]["in_mvp_scope"])
 
     def test_cli_uses_local_incident_guidance_file_override(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
