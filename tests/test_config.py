@@ -436,6 +436,28 @@ class SignedManifestLoaderTests(unittest.TestCase):
 
             self.assertIn("unsupported status", str(ctx.exception))
 
+    def test_loader_rejects_invalid_transport_reenable_policy(self) -> None:
+        private_pem, public_pem = generate_keypair()
+        verifier = Ed25519Verifier.from_public_key_pem(public_pem)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            store = ManifestStore(Path(tmp) / "cache")
+            loader = SignedManifestLoader(verifier=verifier, store=store)
+
+            manifest = signed_manifest(private_pem)
+            manifest["features"]["transport_reenable_policy"] = {
+                "default": {
+                    "retry_delay_seconds": 600,
+                    "max_retry_delay_seconds": 300,
+                }
+            }
+            manifest["signature"] = sign_payload(private_pem, canonical_manifest_bytes(manifest))
+
+            with self.assertRaises(Exception) as ctx:
+                loader.load_dict(manifest)
+
+            self.assertIn("max_retry_delay_seconds", str(ctx.exception))
+
     def test_loader_rejects_invalid_endpoint_supported_client_platforms(self) -> None:
         private_pem, public_pem = generate_keypair()
         verifier = Ed25519Verifier.from_public_key_pem(public_pem)

@@ -170,12 +170,17 @@ class StateManager:
         self.state.transport_reenable_not_before[transport] = when.isoformat()
         self.store.save(self.state)
 
-    def fail_transport_reenable(self, transport: str, retry_delay_seconds: int = 120) -> None:
+    def fail_transport_reenable(
+        self,
+        transport: str,
+        retry_delay_seconds: int = 120,
+        max_retry_delay_seconds: int = 1800,
+    ) -> None:
         streak = self.state.transport_reenable_fail_streaks.get(transport, 0) + 1
         self.state.transport_reenable_fail_streaks[transport] = streak
         self.state.transport_reenable_pending[transport] = False
         self.state.transport_reenable_not_before.pop(transport, None)
-        escalated_delay = min(retry_delay_seconds * (2 ** max(streak - 1, 0)), 1800)
+        escalated_delay = min(retry_delay_seconds * (2 ** max(streak - 1, 0)), max_retry_delay_seconds)
         self.set_incident_flag_with_ttl(f"disable_transport_{transport}", True, ttl_seconds=escalated_delay)
         self.store.save(self.state)
 

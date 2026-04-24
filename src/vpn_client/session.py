@@ -419,6 +419,10 @@ class SessionOrchestrator:
 
         reenabled: list[str] = []
         for transport_name in self.state_manager.ready_transports_for_reenable()[: max(limit, 1)]:
+            reenable_policy = self.policy_engine.resolve_transport_reenable_policy(
+                manifest,
+                transport=transport_name,
+            )
             endpoint = next((item for item in manifest.endpoints if item.transport == transport_name), None)
             if endpoint is None:
                 self.state_manager.mark_transport_reenable_pending(transport_name, False)
@@ -445,7 +449,11 @@ class SessionOrchestrator:
                     detail="background probe succeeded",
                 )
             else:
-                self.state_manager.fail_transport_reenable(transport_name, retry_delay_seconds=120)
+                self.state_manager.fail_transport_reenable(
+                    transport_name,
+                    retry_delay_seconds=reenable_policy.retry_delay_seconds,
+                    max_retry_delay_seconds=reenable_policy.max_retry_delay_seconds,
+                )
                 self.telemetry.record(
                     "transport_reenable_failed",
                     SessionState.IDLE,
@@ -453,7 +461,9 @@ class SessionOrchestrator:
                     endpoint_id=endpoint.id,
                     transport=transport_name,
                     detail=(
-                        f"{probe.detail}; fail_streak={self.state_manager.transport_reenable_fail_streak(transport_name)}"
+                        f"{probe.detail}; fail_streak={self.state_manager.transport_reenable_fail_streak(transport_name)}; "
+                        f"retry_delay_seconds={reenable_policy.retry_delay_seconds}; "
+                        f"max_retry_delay_seconds={reenable_policy.max_retry_delay_seconds}"
                     ),
                 )
         return reenabled

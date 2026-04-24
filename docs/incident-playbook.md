@@ -30,6 +30,7 @@ Read these support bundle fields before changing anything:
 - `endpoint_health`
 - `dataplane_runtime`
 - `session_health_policy_resolved`
+- `transport_reenable_policy_resolved`
 - recent telemetry `events`
 
 ## Incident Classes

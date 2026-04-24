@@ -1087,6 +1087,56 @@ class SessionOrchestratorTests(unittest.TestCase):
             self.assertTrue(state_manager.incident_flag("disable_transport_https"))
             self.assertFalse(state_manager.transport_reenable_pending("https"))
 
+    def test_background_reevaluation_uses_resolved_transport_reenable_policy(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            state_manager = StateManager(StateStore(Path(tmp) / "state.json"))
+            state_manager.set_incident_flag_with_ttl("disable_transport_https", True, ttl_seconds=1)
+            state_manager.state.incident_flag_expires_at["disable_transport_https"] = "2020-01-01T00:00:00+00:00"
+            self.assertFalse(state_manager.incident_flag("disable_transport_https"))
+            state_manager.state.transport_reenable_not_before["https"] = "2020-01-01T00:00:00+00:00"
+            telemetry = TelemetryRecorder()
+            orchestrator = SessionOrchestrator(
+                default_transport_registry(),
+                ProbeEngine(),
+                policy_engine=PolicyEngine(state_manager=state_manager),
+                network_stack=SimulatedNetworkStack(),
+                telemetry=telemetry,
+                dataplane=LinuxUserspaceDataPlane(dry_run=True),
+                state_manager=state_manager,
+            )
+            manifest = Manifest(
+                version=1,
+                generated_at="2026-04-23T00:00:00Z",
+                expires_at="2026-04-30T00:00:00Z",
+                features={
+                    "transport_reenable_policy": {
+                        "default": {
+                            "retry_delay_seconds": 180,
+                            "max_retry_delay_seconds": 240,
+                        }
+                    }
+                },
+                transport_policy=TransportPolicy(preferred_order=["https"], retry_budget=1),
+                network_policy=NetworkPolicy(),
+                endpoints=[
+                    Endpoint(
+                        id="https-1",
+                        host="198.51.100.20",
+                        port=443,
+                        transport="https",
+                        region="eu-central",
+                        metadata={"simulated_failure": "tls"},
+                    ),
+                ],
+            )
+
+            reenabled = orchestrator.reevaluate_pending_transports(manifest, limit=1)
+
+            self.assertEqual(reenabled, [])
+            self.assertEqual(state_manager.transport_reenable_fail_streak("https"), 1)
+            self.assertIn("retry_delay_seconds=180", telemetry.events[-1].detail)
+            self.assertIn("max_retry_delay_seconds=240", telemetry.events[-1].detail)
+
     def test_runtime_tick_reports_pending_and_reenabled(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             state_manager = StateManager(StateStore(Path(tmp) / "state.json"))

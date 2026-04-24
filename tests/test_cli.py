@@ -86,6 +86,14 @@ class CliTests(unittest.TestCase):
             self.assertEqual(payload["extra"]["runtime_support"]["tier"], "development-only")
             self.assertFalse(payload["extra"]["runtime_support"]["in_mvp_scope"])
             self.assertEqual(
+                payload["extra"]["transport_reenable_policy_resolved"]["https"]["retry_delay_seconds"],
+                120,
+            )
+            self.assertEqual(
+                payload["extra"]["transport_reenable_policy_resolved"]["https"]["max_retry_delay_seconds"],
+                1800,
+            )
+            self.assertEqual(
                 payload["extra"]["transport_recovery"]["https"]["crash_reason"],
                 "stale runtime marker recovered on startup",
             )

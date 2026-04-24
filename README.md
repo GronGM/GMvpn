@@ -259,6 +259,35 @@ CLI behavior is tri-state:
 
 The CLI prints the resolved values as `session_health_checks` and `session_health_auto_reconnect`.
 
+The manifest can also bound the background transport re-enable backoff:
+
+```json
+{
+  "features": {
+    "transport_reenable_policy": {
+      "default": {
+        "retry_delay_seconds": 120,
+        "max_retry_delay_seconds": 1800
+      },
+      "by_transport": {
+        "wireguard": {
+          "retry_delay_seconds": 300,
+          "max_retry_delay_seconds": 2400
+        }
+      }
+    }
+  }
+}
+```
+
+Rules:
+
+- `default` sets the base retry delay and cap for failed background re-enable probes;
+- `by_transport` can override that policy for a specific transport;
+- `retry_delay_seconds` must stay in the bounded range `60..900`;
+- `max_retry_delay_seconds` must stay in the bounded range `120..3600`;
+- `max_retry_delay_seconds` must not be lower than `retry_delay_seconds`.
+
 ## Support Bundle Diagnostics
 
 The support bundle now exports the effective monitoring policy and the persistent state used to reason about repeated soft failures:
@@ -266,6 +295,7 @@ The support bundle now exports the effective monitoring policy and the persisten
 - `session_health_checks`
 - `session_health_auto_reconnect`
 - `session_health_policy_resolved`
+- `transport_reenable_policy_resolved`
 - `session_health_fail_streak`
 - `session_health_fail_bucket`
 - `transport_soft_fail_streaks`
