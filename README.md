@@ -53,6 +53,12 @@ PYTHONPATH=src python -m vpn_client.cli \
 PYTHONPATH=src python -m unittest discover -s tests -v
 ```
 
+Pull requests and pushes to `main` are now expected to keep the CI test workflow green.
+The baseline automated gate runs:
+
+- `python -m compileall src tests`
+- `PYTHONPATH=src python -m unittest discover -s tests -v`
+
 Linux-first network planning stays in dry-run mode by default and prints the command plan it would apply.
 The data-plane backends also stay in dry-run mode by default and print the command they would launch.
 
