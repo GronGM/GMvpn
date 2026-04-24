@@ -417,14 +417,22 @@ def main() -> int:
         print("linux_reconciliation_plan:")
         for command in network_stack.last_reconciliation.commands:
             print(f"  - {' '.join(command)}")
+        if network_stack.last_reconciliation.failure_reason_code is not None:
+            print(f"linux_reconciliation_failure_reason={network_stack.last_reconciliation.failure_reason_code}")
         if network_stack.last_reconciliation.missing_commands:
             print(f"linux_reconciliation_missing_commands={','.join(network_stack.last_reconciliation.missing_commands)}")
+        if network_stack.last_reconciliation.failed_commands:
+            print(f"linux_reconciliation_failed_commands={len(network_stack.last_reconciliation.failed_commands)}")
     if isinstance(network_stack, LinuxPlatformAdapter) and network_stack.last_execution:
         print(f"linux_execution_action={network_stack.last_execution.action}")
         if network_stack.last_execution.failure_reason_code is not None:
             print(f"linux_execution_failure_reason={network_stack.last_execution.failure_reason_code}")
         if network_stack.last_execution.missing_commands:
             print(f"linux_execution_missing_commands={','.join(network_stack.last_execution.missing_commands)}")
+        if network_stack.last_execution.cleanup_incomplete:
+            print("linux_execution_cleanup_incomplete=true")
+        if network_stack.last_execution.failed_commands:
+            print(f"linux_execution_failed_commands={len(network_stack.last_execution.failed_commands)}")
     if report.attempts:
         print("attempts:")
         for attempt in report.attempts:
@@ -551,6 +559,11 @@ def main() -> int:
                         "executed": network_stack.last_reconciliation.executed,
                         "commands": network_stack.last_reconciliation.commands,
                         "missing_commands": network_stack.last_reconciliation.missing_commands,
+                        "partial_failure": network_stack.last_reconciliation.partial_failure,
+                        "failure_reason_code": network_stack.last_reconciliation.failure_reason_code,
+                        "failure_detail": network_stack.last_reconciliation.failure_detail,
+                        "applied_commands": network_stack.last_reconciliation.applied_commands,
+                        "failed_commands": network_stack.last_reconciliation.failed_commands,
                     }
                     if isinstance(network_stack, LinuxPlatformAdapter) and network_stack.last_reconciliation
                     else None
@@ -564,6 +577,8 @@ def main() -> int:
                         "failure_reason_code": network_stack.last_execution.failure_reason_code,
                         "failure_detail": network_stack.last_execution.failure_detail,
                         "missing_commands": network_stack.last_execution.missing_commands,
+                        "cleanup_incomplete": network_stack.last_execution.cleanup_incomplete,
+                        "failed_commands": network_stack.last_execution.failed_commands,
                     }
                     if isinstance(network_stack, LinuxPlatformAdapter) and network_stack.last_execution
                     else None

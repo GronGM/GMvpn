@@ -34,6 +34,7 @@ Read these support bundle fields before changing anything:
 - `dataplane_runtime`
 - `dataplane_runtime.preflight_error`
 - `linux_execution`
+- `linux_reconciliation.failure_reason_code`
 - `session_health_policy_resolved`
 - `transport_reenable_policy_resolved`
 - `transport_failure_policy_resolved`

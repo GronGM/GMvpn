@@ -47,6 +47,7 @@ It is intentionally narrower than a full cross-platform product release.
 - Confirm reason-aware health monitoring still exports `failure_class` and `reason_code` surfaces.
 - Confirm the Linux runtime contour still renders the expected Xray config and platform command plan.
 - Confirm real-mode failures for missing Linux or Xray prerequisites surface explicit preflight diagnostics.
+- Confirm Linux cleanup paths report partial reconciliation or teardown without hiding that cleanup remained incomplete.
 - Confirm incident summary generation still runs for degraded or failed sessions.
 
 ## Support Bundle Contract
@@ -62,6 +63,7 @@ It is intentionally narrower than a full cross-platform product release.
   - `transport_reenable_policy_resolved`
   - `transport_failure_policy_resolved`
   - `linux_execution`
+  - `linux_reconciliation.failure_reason_code`
 - Confirm `runtime_support.tier` and `runtime_support.in_mvp_scope` are present.
 - Confirm `endpoint_health[*].last_reason_code` and transport soft-failure buckets are present.
 - Confirm background re-enable policy values are bounded and visible for the transports you expect to support.

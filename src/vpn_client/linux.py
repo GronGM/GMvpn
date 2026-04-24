@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import shutil
 import subprocess
 
@@ -25,6 +25,8 @@ class LinuxExecutionReport:
     failure_reason_code: str | None = None
     failure_detail: str | None = None
     missing_commands: list[str] | None = None
+    cleanup_incomplete: bool = False
+    failed_commands: list[list[str]] = field(default_factory=list)
 
 
 @dataclass(slots=True)
@@ -33,6 +35,11 @@ class LinuxReconciliationReport:
     dry_run: bool
     executed: bool
     missing_commands: list[str] | None = None
+    partial_failure: bool = False
+    failure_reason_code: str | None = None
+    failure_detail: str | None = None
+    applied_commands: list[list[str]] = field(default_factory=list)
+    failed_commands: list[list[str]] = field(default_factory=list)
 
 
 class LinuxNetworkStack(SimulatedNetworkStack):
@@ -143,33 +150,41 @@ class LinuxNetworkStack(SimulatedNetworkStack):
             ["nft", "delete", "rule", "inet", "filter", "output", "oifname", "!=", self.interface_name, "drop"],
         ]
         executed = False
-        missing_commands: list[str] | None = None
+        missing_commands = self._missing_commands(commands)
+        applied_commands: list[list[str]] = []
+        failed_commands: list[list[str]] = []
+        failure_reason_code: str | None = None
+        failure_detail: str | None = None
+        partial_failure = False
         if not self.dry_run:
-            missing_commands = self._missing_commands(commands)
-            if missing_commands:
-                self.last_reconciliation = LinuxReconciliationReport(
-                    commands=commands,
-                    dry_run=self.dry_run,
-                    executed=False,
-                    missing_commands=missing_commands,
-                )
-                raise NetworkStackError(
-                    FailureClass.NETWORK_DOWN,
-                    "linux startup reconciliation prerequisites are missing: "
-                    + ", ".join(missing_commands),
-                    reason_code=FailureReasonCode.PLATFORM_TOOL_MISSING,
-                )
             for command in commands:
+                if command[0] in missing_commands:
+                    failed_commands.append(command)
+                    partial_failure = True
+                    continue
                 try:
                     self.command_runner(command)
+                    applied_commands.append(command)
                 except Exception:
-                    continue
-            executed = True
+                    failed_commands.append(command)
+                    partial_failure = True
+            executed = bool(applied_commands)
+            if missing_commands:
+                failure_reason_code = FailureReasonCode.PLATFORM_TOOL_MISSING.value
+                failure_detail = "linux startup reconciliation skipped missing tools: " + ", ".join(missing_commands)
+            elif partial_failure:
+                failure_reason_code = FailureReasonCode.ROUTE_PROGRAMMING_FAILED.value
+                failure_detail = "linux startup reconciliation completed with partial cleanup failures"
         self.last_reconciliation = LinuxReconciliationReport(
             commands=commands,
             dry_run=self.dry_run,
             executed=executed,
             missing_commands=missing_commands,
+            partial_failure=partial_failure,
+            failure_reason_code=failure_reason_code,
+            failure_detail=failure_detail,
+            applied_commands=applied_commands,
+            failed_commands=failed_commands,
         )
         return self.last_reconciliation
 
@@ -202,6 +217,8 @@ class LinuxNetworkStack(SimulatedNetworkStack):
                 failure_reason_code=FailureReasonCode.PLATFORM_TOOL_MISSING.value,
                 failure_detail=detail,
                 missing_commands=missing_commands,
+                cleanup_incomplete=False,
+                failed_commands=[],
             )
             raise NetworkStackError(
                 FailureClass.NETWORK_DOWN,
@@ -218,6 +235,8 @@ class LinuxNetworkStack(SimulatedNetworkStack):
                 rolled_back=False,
                 action=action,
                 missing_commands=[],
+                cleanup_incomplete=False,
+                failed_commands=[],
             )
         except Exception as exc:
             for command in plan.rollback_commands:
@@ -236,50 +255,48 @@ class LinuxNetworkStack(SimulatedNetworkStack):
                 failure_reason_code=FailureReasonCode.ROUTE_PROGRAMMING_FAILED.value,
                 failure_detail=f"linux plan execution failed: {exc}",
                 missing_commands=[],
+                cleanup_incomplete=len(rollback_attempts) != len(plan.rollback_commands),
+                failed_commands=[
+                    command for command in plan.rollback_commands if command not in rollback_attempts
+                ],
             )
             raise NetworkStackError(FailureClass.NETWORK_DOWN, f"linux plan execution failed: {exc}") from exc
 
     def _execute_disconnect(self, plan: LinuxCommandPlan) -> None:
         executed: list[list[str]] = []
         missing_commands = self._missing_commands(plan.rollback_commands)
-        if missing_commands:
-            detail = "linux disconnect prerequisites are missing: " + ", ".join(missing_commands)
-            self.last_execution = LinuxExecutionReport(
-                applied_commands=[],
-                rollback_commands=[],
-                rolled_back=True,
-                action="disconnect",
-                failure_reason_code=FailureReasonCode.PLATFORM_TOOL_MISSING.value,
-                failure_detail=detail,
-                missing_commands=missing_commands,
-            )
-            raise NetworkStackError(
-                FailureClass.NETWORK_DOWN,
-                detail,
-                reason_code=FailureReasonCode.PLATFORM_TOOL_MISSING,
-            )
-        try:
-            for command in plan.rollback_commands:
+        failed_commands: list[list[str]] = []
+        failure_reason_code: str | None = None
+        failure_detail: str | None = None
+
+        for command in plan.rollback_commands:
+            if command[0] in missing_commands:
+                failed_commands.append(command)
+                continue
+            try:
                 self.command_runner(command)
                 executed.append(command)
-            self.last_execution = LinuxExecutionReport(
-                applied_commands=[],
-                rollback_commands=executed,
-                rolled_back=True,
-                action="disconnect",
-                missing_commands=[],
-            )
-        except Exception as exc:
-            self.last_execution = LinuxExecutionReport(
-                applied_commands=[],
-                rollback_commands=executed,
-                rolled_back=True,
-                action="disconnect",
-                failure_reason_code=FailureReasonCode.ROUTE_PROGRAMMING_FAILED.value,
-                failure_detail=f"linux disconnect failed: {exc}",
-                missing_commands=[],
-            )
-            raise NetworkStackError(FailureClass.NETWORK_DOWN, f"linux disconnect failed: {exc}") from exc
+            except Exception:
+                failed_commands.append(command)
+
+        if missing_commands:
+            failure_reason_code = FailureReasonCode.PLATFORM_TOOL_MISSING.value
+            failure_detail = "linux disconnect skipped missing tools: " + ", ".join(missing_commands)
+        elif failed_commands:
+            failure_reason_code = FailureReasonCode.ROUTE_PROGRAMMING_FAILED.value
+            failure_detail = "linux disconnect completed with partial cleanup failures"
+
+        self.last_execution = LinuxExecutionReport(
+            applied_commands=[],
+            rollback_commands=executed,
+            rolled_back=bool(executed),
+            action="disconnect",
+            failure_reason_code=failure_reason_code,
+            failure_detail=failure_detail,
+            missing_commands=missing_commands,
+            cleanup_incomplete=bool(failed_commands),
+            failed_commands=failed_commands,
+        )
 
     def _default_command_runner(self, command: list[str]) -> None:
         subprocess.run(command, check=True, capture_output=True, text=True)
