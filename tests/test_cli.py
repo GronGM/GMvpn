@@ -133,6 +133,65 @@ class CliTests(unittest.TestCase):
             self.assertIn("dataplane_backend=null", stdout.getvalue())
             self.assertIn("dataplane_restarts=0", stdout.getvalue())
 
+    def test_cli_prints_linux_reconciliation_summary_for_startup_recovery(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        source_manifest = json.loads((root / "examples" / "demo_manifest.json").read_text(encoding="utf-8"))
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            private_pem, public_pem = generate_keypair()
+            manifest = tmp_path / "demo_manifest.json"
+            public_key = tmp_path / "demo_public_key.pem"
+            source_manifest["signature"] = sign_payload(private_pem, canonical_manifest_bytes(source_manifest))
+            manifest.write_text(json.dumps(source_manifest), encoding="utf-8")
+            public_key.write_bytes(public_pem)
+            support_bundle = tmp_path / "bundle.json"
+            stdout = io.StringIO()
+
+            argv = [
+                "vpn-client",
+                "--manifest",
+                str(manifest),
+                "--public-key",
+                str(public_key),
+                "--cache-dir",
+                str(tmp_path / "cache"),
+                "--state-file",
+                str(tmp_path / "state.json"),
+                "--runtime-marker",
+                str(tmp_path / "runtime-marker.json"),
+                "--backend-state-file",
+                str(tmp_path / "backend-state.json"),
+                "--support-bundle",
+                str(support_bundle),
+                "--platform",
+                "linux",
+                "--client-platform",
+                "linux",
+                "--dataplane",
+                "xray-core",
+                "--simulate-stale-runtime-endpoint",
+                "ru-spb-https-1",
+            ]
+
+            with patch("sys.argv", argv), contextlib.redirect_stdout(stdout):
+                exit_code = cli.main()
+
+            output = stdout.getvalue()
+            payload = json.loads(support_bundle.read_text(encoding="utf-8"))
+
+            self.assertEqual(exit_code, 0)
+            self.assertIn("linux_reconciliation_dry_run=True", output)
+            self.assertTrue(payload["extra"]["startup_recovery"]["cleanup_enabled"])
+            self.assertTrue(payload["extra"]["startup_recovery"]["stale_marker_found"])
+            self.assertTrue(payload["extra"]["linux_reconciliation"]["dry_run"])
+            missing_commands = payload["extra"]["linux_reconciliation"]["missing_commands"]
+            expected_missing_line = f"linux_reconciliation_missing_commands={','.join(missing_commands)}"
+            if missing_commands:
+                self.assertIn(expected_missing_line, output)
+            else:
+                self.assertNotIn("linux_reconciliation_missing_commands=", output)
+
     def test_cli_prints_incident_summary_for_degraded_session(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)
