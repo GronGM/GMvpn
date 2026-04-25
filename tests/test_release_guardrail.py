@@ -14,6 +14,30 @@ SPEC.loader.exec_module(release_guardrail)
 
 
 class ReleaseGuardrailTests(unittest.TestCase):
+    def _with_temp_manifest(
+        self,
+        filename: str,
+        content: str,
+        attr_name: str,
+        callback,
+    ) -> list[str]:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            examples = root / "examples"
+            examples.mkdir(parents=True, exist_ok=True)
+            sample = examples / filename
+            sample.write_text(content, encoding="utf-8")
+
+            original_root = release_guardrail.ROOT
+            original_path = getattr(release_guardrail, attr_name)
+            try:
+                release_guardrail.ROOT = root
+                setattr(release_guardrail, attr_name, sample)
+                return callback()
+            finally:
+                release_guardrail.ROOT = original_root
+                setattr(release_guardrail, attr_name, original_path)
+
     def test_check_required_snippets_reports_missing_entries(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -34,67 +58,101 @@ class ReleaseGuardrailTests(unittest.TestCase):
         self.assertEqual(failures, [])
 
     def test_linux_xray_smoke_gate_reports_runtime_support_regression(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            examples = root / "examples"
-            examples.mkdir(parents=True, exist_ok=True)
-            sample = examples / "demo_manifest.json"
-            sample.write_text(
-                """
-                {
-                  "platform_capabilities": {
-                    "linux": {
-                      "platform": "linux",
-                      "supported_dataplanes": ["xray-core"],
-                      "network_adapter": "linux",
-                      "startup_reconciliation": true,
-                      "status": "prototype"
-                    }
-                  },
-                  "network_policy": {
-                    "tunnel_mode": "full",
-                    "dns_mode": "vpn_only",
-                    "kill_switch_enabled": true,
-                    "ipv6_enabled": false,
-                    "allow_lan_while_connected": false
-                  },
-                  "endpoints": [
-                    {
-                      "id": "edge-1",
-                      "host": "198.51.100.20",
-                      "port": 443,
-                      "transport": "https",
-                      "region": "eu-central",
-                      "metadata": {
-                        "dataplane": "xray-core",
-                        "xray_protocol": "vless",
-                        "xray_user_id": "11111111-1111-1111-1111-111111111111",
-                        "xray_stream_network": "tcp",
-                        "xray_security": "tls",
-                        "xray_server_name": "cdn.example.net"
-                      }
-                    }
-                  ]
+        failures = self._with_temp_manifest(
+            "demo_manifest.json",
+            """
+            {
+              "platform_capabilities": {
+                "linux": {
+                  "platform": "linux",
+                  "supported_dataplanes": ["xray-core"],
+                  "network_adapter": "linux",
+                  "startup_reconciliation": true,
+                  "status": "prototype"
                 }
-                """,
-                encoding="utf-8",
-            )
-
-            original_root = release_guardrail.ROOT
-            original_demo_manifest = release_guardrail.DEMO_MANIFEST
-            try:
-                release_guardrail.ROOT = root
-                release_guardrail.DEMO_MANIFEST = sample
-                failures = release_guardrail._check_linux_xray_smoke_gate()
-            finally:
-                release_guardrail.ROOT = original_root
-                release_guardrail.DEMO_MANIFEST = original_demo_manifest
+              },
+              "network_policy": {
+                "tunnel_mode": "full",
+                "dns_mode": "vpn_only",
+                "kill_switch_enabled": true,
+                "ipv6_enabled": false,
+                "allow_lan_while_connected": false
+              },
+              "endpoints": [
+                {
+                  "id": "edge-1",
+                  "host": "198.51.100.20",
+                  "port": 443,
+                  "transport": "https",
+                  "region": "eu-central",
+                  "metadata": {
+                    "dataplane": "xray-core",
+                    "xray_protocol": "vless",
+                    "xray_user_id": "11111111-1111-1111-1111-111111111111",
+                    "xray_stream_network": "tcp",
+                    "xray_security": "tls",
+                    "xray_server_name": "cdn.example.net"
+                  }
+                }
+              ]
+            }
+            """,
+            "DEMO_MANIFEST",
+            release_guardrail._check_linux_xray_smoke_gate,
+        )
 
         self.assertEqual(
             failures,
             [
                 "linux+xray smoke gate: runtime support no longer assesses linux + xray-core + linux adapter as mvp-supported"
             ],
+        )
+
+    def test_provider_profile_contract_passes_for_repo_manifest(self) -> None:
+        failures = release_guardrail._check_provider_profile_contract()
+        self.assertEqual(failures, [])
+
+    def test_provider_profile_contract_reports_missing_linux_xray_endpoint(self) -> None:
+        failures = self._with_temp_manifest(
+            "provider_profile_manifest.json",
+            """
+            {
+              "provider_profile_schema_version": 1,
+              "features": {
+                "profile_kind": "provider-profile"
+              },
+              "platform_capabilities": {
+                "linux": {
+                  "platform": "linux",
+                  "supported_dataplanes": ["xray-core"],
+                  "network_adapter": "linux",
+                  "status": "mvp-supported"
+                }
+              },
+              "endpoints": [
+                {
+                  "id": "spb-main-ios",
+                  "host": "198.51.100.40",
+                  "port": 443,
+                  "transport": "https",
+                  "region": "ru-spb",
+                  "metadata": {
+                    "dataplane": "ios-bridge",
+                    "supported_client_platforms": ["ios"],
+                    "logical_server": "spb-main",
+                    "provider_profile_schema_version": 1
+                  }
+                }
+              ]
+            }
+            """,
+            "PROVIDER_PROFILE_MANIFEST",
+            release_guardrail._check_provider_profile_contract,
+        )
+
+        self.assertEqual(
+            failures,
+            ["provider-profile contract: provider profile manifest is missing a linux-targeted xray-core endpoint"],
         )
 
     def test_parse_cli_output_collects_release_facing_fields(self) -> None:
