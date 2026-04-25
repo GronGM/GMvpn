@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from types import SimpleNamespace
 import unittest
 import tempfile
 import time
@@ -148,12 +149,38 @@ class XrayCoreDataPlaneTests(unittest.TestCase):
         config = renderer.render(endpoint)
 
         self.assertEqual(config["inbounds"][0]["settings"]["name"], "tun42")
+        self.assertEqual(config["inbounds"][0]["settings"]["MTU"], 1380)
+        self.assertNotIn("autoRoute", config["inbounds"][0]["settings"])
+        self.assertNotIn("strictRoute", config["inbounds"][0]["settings"])
+        self.assertNotIn("stack", config["inbounds"][0]["settings"])
         self.assertEqual(config["outbounds"][0]["protocol"], "vless")
         self.assertEqual(config["outbounds"][0]["streamSettings"]["security"], "reality")
         self.assertEqual(
             config["outbounds"][0]["streamSettings"]["realitySettings"]["publicKey"],
             "pubkey",
         )
+
+    def test_renderer_includes_tun_user_level_only_when_declared(self) -> None:
+        endpoint = Endpoint(
+            id="edge-ru-1",
+            host="198.51.100.20",
+            port=443,
+            transport="https",
+            region="ru-spb",
+            metadata={
+                "xray_protocol": "vless",
+                "xray_user_id": "11111111-1111-1111-1111-111111111111",
+                "xray_stream_network": "tcp",
+                "xray_security": "tls",
+                "xray_server_name": "cdn.example.net",
+                "xray_tun_user_level": 1,
+            },
+        )
+
+        renderer = XrayConfigRenderer(interface_name="tun42")
+        config = renderer.render(endpoint)
+
+        self.assertEqual(config["inbounds"][0]["settings"]["userLevel"], 1)
 
     def test_renderer_requires_identity_material(self) -> None:
         endpoint = Endpoint(
@@ -276,6 +303,86 @@ class XrayCoreDataPlaneTests(unittest.TestCase):
             self.assertEqual(snapshot["preflight_error"], "xray-core binary 'xray-missing' was not found in PATH")
             self.assertIsNone(snapshot["config_path"])
 
+    def test_xray_dataplane_validates_config_before_real_start(self) -> None:
+        endpoint = Endpoint(
+            id="edge-ru-1",
+            host="198.51.100.20",
+            port=443,
+            transport="https",
+            region="ru-spb",
+            metadata={
+                "xray_protocol": "vless",
+                "xray_user_id": "11111111-1111-1111-1111-111111111111",
+                "xray_stream_network": "tcp",
+                "xray_security": "tls",
+                "xray_server_name": "cdn.example.net",
+            },
+        )
+
+        seen_commands: list[list[str]] = []
+
+        def fake_config_test_runner(command: list[str], **_kwargs):
+            seen_commands.append(command)
+            return SimpleNamespace(returncode=0, stdout="Configuration OK", stderr="")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            backend = XrayCoreDataPlane(
+                interface_name="tun42",
+                dry_run=False,
+                config_dir=Path(tmp),
+                binary_path="python",
+                binary_exists=lambda _name: "/usr/bin/python",
+                config_test_runner=fake_config_test_runner,
+            )
+
+            session = backend.connect(endpoint)
+            backend.disconnect()
+
+            self.assertEqual(session.backend_name, "xray-core")
+            self.assertEqual(
+                seen_commands,
+                [["python", "run", "-test", "-config", str(Path(tmp) / "edge-ru-1.json")]],
+            )
+
+    def test_xray_dataplane_surfaces_config_validation_failure(self) -> None:
+        endpoint = Endpoint(
+            id="edge-ru-1",
+            host="198.51.100.20",
+            port=443,
+            transport="https",
+            region="ru-spb",
+            metadata={
+                "xray_protocol": "vless",
+                "xray_user_id": "11111111-1111-1111-1111-111111111111",
+                "xray_stream_network": "tcp",
+                "xray_security": "tls",
+                "xray_server_name": "cdn.example.net",
+            },
+        )
+
+        def fake_config_test_runner(_command: list[str], **_kwargs):
+            return SimpleNamespace(returncode=1, stdout="", stderr="unknown config key: autoRoute")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            backend = XrayCoreDataPlane(
+                interface_name="tun42",
+                dry_run=False,
+                config_dir=Path(tmp),
+                binary_path="xray",
+                binary_exists=lambda _name: "/usr/bin/xray",
+                config_test_runner=fake_config_test_runner,
+            )
+
+            with self.assertRaises(DataPlaneError) as ctx:
+                backend.connect(endpoint)
+
+            snapshot = backend.runtime_snapshot()
+            self.assertEqual(ctx.exception.reason_code, FailureReasonCode.DATAPLANE_BACKEND_START_FAILED)
+            self.assertIn("xray-core config validation failed:", ctx.exception.detail)
+            self.assertIn("unknown config key: autoRoute", ctx.exception.detail)
+            self.assertEqual(snapshot["preflight_error"], ctx.exception.detail)
+            self.assertIsNone(snapshot["config_path"])
+
     def test_xray_dataplane_attributes_post_start_exit_with_runtime_details(self) -> None:
         endpoint = Endpoint(
             id="edge-ru-1",
@@ -301,6 +408,11 @@ class XrayCoreDataPlaneTests(unittest.TestCase):
                 state_store=store,
                 binary_path="python",
                 binary_exists=lambda _name: "/usr/bin/python",
+                config_test_runner=lambda _command, **_kwargs: SimpleNamespace(
+                    returncode=0,
+                    stdout="Configuration OK",
+                    stderr="",
+                ),
             )
 
             backend.connect(endpoint)
