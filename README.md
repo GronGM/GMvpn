@@ -1,6 +1,6 @@
 # Resilient VPN Client
 
-This repository is a Linux-first prototype for a resilient open-source VPN client built for unstable, degraded, and operationally hostile network conditions.
+This repository is a Linux-first reference implementation for a resilient VPN runtime and control-plane layer built for unstable, degraded, and operationally hostile network conditions.
 
 What exists today:
 
@@ -15,9 +15,26 @@ What exists today:
 - unit tests plus a compact release guardrail for release-facing checks.
 
 Compatibility rules are documented in [docs/schema-compatibility.md](/workspace/docs/schema-compatibility.md).
+Project framing and audience are described in [docs/product-positioning.md](/workspace/docs/product-positioning.md).
 Operational docs live in [docs/release-checklist.md](/workspace/docs/release-checklist.md), [docs/incident-playbook.md](/workspace/docs/incident-playbook.md), and [docs/roadmap.md](/workspace/docs/roadmap.md).
 
-This is still not a production-ready cross-platform VPN client. The repository is best read as a control-plane and runtime-hardening foundation with one honest MVP contour, not as a finished end-user product.
+This is still not a production-ready cross-platform VPN client. The repository is best read as:
+
+- a Linux-first reference client for one honest `xray-core` runtime contour;
+- a control-plane and runtime-orchestration foundation;
+- a provider-facing contract, diagnostics, and policy layer;
+- not a finished consumer VPN product.
+
+## What This Project Is For
+
+The most realistic use cases for the repository today are:
+
+- building and testing signed provider manifests and provider-profile compilation flows;
+- validating runtime policy, diagnostics, and support-bundle contracts around `xray-core`;
+- running a Linux-first reference contour for release and incident work;
+- using the codebase as a reference implementation for orchestration, failure handling, and operator-facing diagnostics.
+
+If your goal is "an end-user VPN app that competes with Hiddify, NekoBox, v2rayN, or sing-box frontends", this repository is not there today and should not be evaluated on that basis.
 
 ## Honest MVP Target
 
@@ -44,6 +61,17 @@ The current repository state is intentionally conservative:
 - the CLI default dataplane is still `routed` for local testing, so the release-track contour should be selected explicitly when you want to exercise the MVP path;
 - runtime support assessment is explicit, and only `linux + xray-core + linux adapter` is currently assessed as `mvp-supported`;
 - Xray-backed runs in real mode fail fast if the binary is missing or the rendered config does not pass Xray preflight validation.
+
+## Strategic Direction
+
+The strongest path for this repository is not "become another mass-market VPN client UI".
+
+The stronger path is:
+
+- keep one releaseable Linux reference contour honest and observable;
+- harden provider manifests, compiler outputs, runtime policy, and diagnostics;
+- make the repository useful as a control-plane/orchestration layer around `xray-core`;
+- treat other platforms as explicit runtime contracts until they have real implementations.
 
 ## Repository Layout
 
@@ -104,7 +132,7 @@ When you leave dry-run for `xray-core`, the client checks that the Xray binary e
 
 ## Xray Direction
 
-The repository now treats `xray-core` as the release-track dataplane for the first Linux MVP contour and as the long-term engine direction for desktop-class and Android-style runtimes, while keeping the product config model independent from raw Xray JSON.
+The repository now treats `xray-core` as the release-track dataplane for the first Linux MVP contour and as the long-term engine direction for other runtime contracts, while keeping the product config model independent from raw Xray JSON.
 
 - `xray-core` is wired in as a concrete `DataPlaneBackend`;
 - endpoint metadata can now carry Xray-specific rendering fields such as protocol, stream, and TLS or Reality settings;
