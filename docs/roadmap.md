@@ -23,8 +23,8 @@ This means the client can eventually feel like one product to providers and end 
 
 The repository should currently be read as:
 
-- a Linux-first prototype with one explicit release-track contour;
-- a shared control plane that is ahead of most platform runtimes;
+- a Linux-first reference client with one explicit release-track contour;
+- a shared control plane and provider-facing contract layer that is ahead of most platform runtimes;
 - a codebase that already takes release/support contracts seriously;
 - not yet a production-ready cross-platform client.
 
@@ -33,6 +33,12 @@ For practical release and operator work, the only contour that should be describ
 - `client-platform=linux`
 - linux platform adapter
 - `dataplane=xray-core`
+
+The intended strategic reading is therefore:
+
+- near-term: Linux reference contour plus provider/control-plane hardening;
+- mid-term: stronger SDK-like contract surface around manifests, policy, and diagnostics;
+- not near-term: competing head-on as a GUI-first consumer VPN product.
 
 ## Guiding Principles
 
@@ -69,7 +75,7 @@ Trying to improve transport logic and platform specifics at the same time will b
 ### Stage 2: Provider Profile And Manifest Stabilization
 
 Goal:
-Turn the configuration model into a controlled compatibility surface for providers.
+Turn the configuration model into a controlled compatibility surface for providers and control-plane integrations.
 
 Scope:
 
@@ -83,6 +89,7 @@ Exit criteria:
 - a provider can generate and validate profiles without hidden platform ambiguity;
 - broken Xray, iOS bridge, or platform capability declarations fail early;
 - schema evolution rules are documented before the next incompatible change.
+- the manifest/compiler layer is useful on its own even outside the CLI reference client.
 
 Key risk:
 If schema changes stay informal, operational drift will outrun client reliability.
@@ -132,7 +139,7 @@ Pretending all platforms are equivalent will create brittle abstractions and rel
 ### Stage 5: Operational Readiness
 
 Goal:
-Make the project releaseable and supportable, not just runnable.
+Make the Linux reference contour and provider-facing contracts releaseable and supportable, not just runnable.
 
 Scope:
 
@@ -153,7 +160,7 @@ Without an operations contour, each release becomes manual firefighting.
 ### Stage 6: Product Surface Expansion
 
 Goal:
-Expand platform and user-facing functionality only after the runtime and operational core is dependable.
+Expand platform and user-facing functionality only after the Linux reference contour and control-plane contracts are dependable.
 
 Scope:
 
@@ -168,6 +175,16 @@ Exit criteria:
 
 Key risk:
 Shipping UX or packaging too early can conceal unfinished control-plane risk.
+
+## Positioning Constraint
+
+Do not plan the roadmap as if the repository must become a mass-market VPN client before it is useful.
+
+It is already useful if it becomes:
+
+- a strong Linux reference implementation;
+- a provider-profile and runtime-policy contract layer;
+- a diagnostics/support bundle reference surface around `xray-core`.
 
 ## MVP Boundary
 
