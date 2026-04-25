@@ -342,7 +342,7 @@ def main() -> int:
     )
     runtime_tick_limit = (
         max(args.reevaluate_pending_transports, 1)
-        if args.reevaluate_pending_transports is not None and args.reevaluate_pending_transports > 0
+        if args.reevaluate_pending_transports is not None and args.reevaluate_pending-transports > 0
         else resolved_runtime_tick_policy.reevaluate_pending_transports_limit
     )
     if not runtime_support_gate_blocked and effective_health_checks > 0 and report.state is SessionState.CONNECTED:
@@ -423,6 +423,8 @@ def main() -> int:
         print(f"runtime_support_caveats={' | '.join(runtime_support.caveats)}")
     print(f"kill_switch_active={report.kill_switch_active}")
     print(f"startup_recovered={recovery_report.stale_marker_found and recovery_cleanup_enabled}")
+    if recovery_report.actions:
+        print(f"startup_recovery_actions_count={len(recovery_report.actions)}")
     if local_incident_guidance_source is not None:
         print(f"incident_guidance_source={local_incident_guidance_source}")
     if simulated_stale_runtime_endpoint_id:
