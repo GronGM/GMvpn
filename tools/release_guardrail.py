@@ -264,9 +264,11 @@ def _check_structural_artifact_parity() -> list[str]:
 
     returncode, stdout, bundle = _run_cli_and_collect(
         "--platform",
-        "simulated",
+        "linux",
+        "--client-platform",
+        "linux",
         "--dataplane",
-        "null",
+        "xray-core",
         "--simulate-stale-runtime-endpoint",
         "ru-spb-https-1",
     )
@@ -290,6 +292,20 @@ def _check_structural_artifact_parity() -> list[str]:
             "structural artifact parity: CLI field 'simulated_stale_runtime_endpoint' "
             f"was '{parsed.get('simulated_stale_runtime_endpoint')}', expected '{simulated_endpoint}' from support bundle"
         )
+    linux_reconciliation = extra.get("linux_reconciliation")
+    if linux_reconciliation is not None:
+        expected_reconciliation_dry_run = str(bool(linux_reconciliation["dry_run"]))
+        if parsed.get("linux_reconciliation_dry_run") != expected_reconciliation_dry_run:
+            failures.append(
+                "structural artifact parity: CLI field 'linux_reconciliation_dry_run' "
+                f"was '{parsed.get('linux_reconciliation_dry_run')}', expected '{expected_reconciliation_dry_run}' from support bundle"
+            )
+        expected_missing_commands = ",".join(linux_reconciliation["missing_commands"])
+        if (parsed.get("linux_reconciliation_missing_commands") or "") != expected_missing_commands:
+            failures.append(
+                "structural artifact parity: CLI field 'linux_reconciliation_missing_commands' "
+                f"was '{parsed.get('linux_reconciliation_missing_commands')}', expected '{expected_missing_commands}' from support bundle"
+            )
 
     mismatch_manifest = {
         "version": 1,
