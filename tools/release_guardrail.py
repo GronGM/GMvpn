@@ -357,6 +357,96 @@ def _check_structural_artifact_parity() -> list[str]:
     return failures
 
 
+def _check_operational_tail_parity() -> list[str]:
+    failures: list[str] = []
+
+    startup_state = {
+        "endpoint_health": {},
+        "last_connected_endpoint_id": None,
+        "incident_flags": {},
+        "incident_flag_expires_at": {},
+        "transport_crash_streaks": {},
+        "transport_crash_buckets": {},
+        "transport_crash_reasons": {},
+        "transport_soft_fail_streaks": {},
+        "transport_soft_fail_buckets": {},
+        "transport_reenable_pending": {},
+        "transport_reenable_not_before": {},
+        "transport_reenable_fail_streaks": {},
+        "session_health_fail_streak": 0,
+        "session_health_fail_bucket": "",
+    }
+    returncode, stdout, bundle = _run_cli_and_collect(
+        "--platform",
+        "simulated",
+        "--dataplane",
+        "null",
+        "--simulate-stale-runtime-endpoint",
+        "ru-spb-https-1",
+        state_payload=startup_state,
+    )
+    if returncode != 0:
+        return [f"operational tail parity: startup-recovery CLI scenario failed with exit code {returncode}"]
+    parsed = _parse_cli_output(stdout)
+    extra = bundle["extra"]
+
+    expected_actions_count = str(len(extra["startup_recovery_actions"]))
+    if parsed.get("startup_recovery_actions_count") != expected_actions_count:
+        failures.append(
+            "operational tail parity: CLI field 'startup_recovery_actions_count' "
+            f"was '{parsed.get('startup_recovery_actions_count')}', expected '{expected_actions_count}' from support bundle"
+        )
+
+    runtime_tick_state = {
+        "endpoint_health": {},
+        "last_connected_endpoint_id": None,
+        "incident_flags": {"disable_transport_https": False},
+        "incident_flag_expires_at": {"disable_transport_https": "2020-01-01T00:00:00+00:00"},
+        "transport_crash_streaks": {},
+        "transport_crash_buckets": {},
+        "transport_crash_reasons": {},
+        "transport_soft_fail_streaks": {},
+        "transport_soft_fail_buckets": {},
+        "transport_reenable_pending": {"https": True},
+        "transport_reenable_not_before": {"https": "2020-01-01T00:00:00+00:00"},
+        "transport_reenable_fail_streaks": {},
+        "session_health_fail_streak": 0,
+        "session_health_fail_bucket": "",
+    }
+    returncode, stdout, bundle = _run_cli_and_collect(
+        "--platform",
+        "simulated",
+        "--dataplane",
+        "null",
+        "--runtime-ticks",
+        "2",
+        "--supervisor-cycles",
+        "1",
+        state_payload=runtime_tick_state,
+    )
+    if returncode != 0:
+        failures.append(f"operational tail parity: maintenance CLI scenario failed with exit code {returncode}")
+        return failures
+    parsed = _parse_cli_output(stdout)
+    extra = bundle["extra"]
+
+    expected_runtime_ticks = str(len(extra["runtime_tick_reports"]))
+    if parsed.get("runtime_ticks") != expected_runtime_ticks:
+        failures.append(
+            "operational tail parity: CLI field 'runtime_ticks' "
+            f"was '{parsed.get('runtime_ticks')}', expected '{expected_runtime_ticks}' from support bundle"
+        )
+
+    expected_supervisor_cycles = str(len(extra["supervisor_cycles"]))
+    if parsed.get("supervisor_cycles") != expected_supervisor_cycles:
+        failures.append(
+            "operational tail parity: CLI field 'supervisor_cycles' "
+            f"was '{parsed.get('supervisor_cycles')}', expected '{expected_supervisor_cycles}' from support bundle"
+        )
+
+    return failures
+
+
 def _check_release_artifact_policy() -> list[str]:
     failures: list[str] = []
 
@@ -791,6 +881,7 @@ def main() -> int:
         failures.extend(_check_release_artifact_policy())
         failures.extend(_check_incident_narrative_consistency())
         failures.extend(_check_structural_artifact_parity())
+        failures.extend(_check_operational_tail_parity())
         if args.run_local_checks:
             failures.extend(_run_local_checks())
 
@@ -808,6 +899,7 @@ def main() -> int:
     print("- CLI and support bundle stay aligned on release-facing policy and incident facts")
     print("- incident narrative stays aligned across CLI, telemetry, and support bundle")
     print("- structural run facts stay aligned across CLI and support bundle")
+    print("- operational tail counts stay aligned across CLI and support bundle")
     if args.run_local_checks:
         print("- local compileall and unittest checks passed")
     return 0

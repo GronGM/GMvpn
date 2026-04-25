@@ -423,6 +423,8 @@ def main() -> int:
         print(f"runtime_support_caveats={' | '.join(runtime_support.caveats)}")
     print(f"kill_switch_active={report.kill_switch_active}")
     print(f"startup_recovered={recovery_report.stale_marker_found and recovery_cleanup_enabled}")
+    if recovery_report.actions:
+        print(f"startup_recovery_actions_count={len(recovery_report.actions)}")
     if local_incident_guidance_source is not None:
         print(f"incident_guidance_source={local_incident_guidance_source}")
     if simulated_stale_runtime_endpoint_id:
