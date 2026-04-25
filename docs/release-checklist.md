@@ -13,7 +13,7 @@ It is intentionally narrower than a full cross-platform product release.
 ## Release Scope Check
 
 - Confirm the release notes describe the product as a Linux-first MVP contour, not a full cross-platform client.
-- Confirm `windows`, `macos`, and `android` are still described as planned or partial runtime tracks.
+- Confirm `windows`, `macos`, and `android` are still described as planned or partial runtime tracks, not supported release contours.
 - Confirm `ios` is still described as bridge-only and not production-ready.
 - Confirm the release does not claim full native platform parity, app-store readiness, or completed Apple runtime support.
 
@@ -30,6 +30,7 @@ It is intentionally narrower than a full cross-platform product release.
 - Run `python tools/release_guardrail.py`.
 - Run `python -m compileall src tests`.
 - Run `PYTHONPATH=src python -m unittest discover -s tests -v`.
+- If the release changes Xray rendering or CI/runtime assumptions, run `PYTHONPATH=src python tools/xray_config_smoke.py --validation-inbound-mode socks`.
 - Confirm the runtime support assessment still marks `linux + xray-core + linux adapter` as `mvp-supported`.
 
 ## Manifest And Config Contract
@@ -48,6 +49,7 @@ It is intentionally narrower than a full cross-platform product release.
 - Confirm reason-aware health monitoring still exports `failure_class` and `reason_code` surfaces.
 - Confirm the Linux runtime contour still renders the expected Xray config and platform command plan.
 - Confirm real-mode failures for missing Linux or Xray prerequisites surface explicit preflight diagnostics.
+- Confirm the release does not widen public claims beyond the runtime surfaces actually covered by support assessment and diagnostics.
 - Confirm Linux cleanup paths report partial reconciliation or teardown without hiding that cleanup remained incomplete.
 - Confirm post-start Xray exits retain attributed crash details including observed running state and exit output tails.
 - Confirm incident summary generation still runs for degraded or failed sessions.
@@ -96,6 +98,7 @@ It is intentionally narrower than a full cross-platform product release.
 
 - State the exact MVP contour supported by this release.
 - State known non-goals and unsupported runtime paths.
+- State that CLI defaults remain conservative and may differ from the release-track contour used for support.
 - Call out any changes to support bundle structure or incident diagnostics.
 - Call out any manifest/schema compatibility considerations.
 - Include the local verification commands that were run.
@@ -105,5 +108,6 @@ It is intentionally narrower than a full cross-platform product release.
 - CI is red or missing for the release candidate.
 - Full unit suite is not green locally.
 - The Linux Xray contour no longer assesses as `mvp-supported`.
+- release-facing docs or README imply broader platform support than the code and support model actually provide.
 - The release notes imply production readiness for placeholder or bridge-only paths.
 - The support bundle no longer explains degraded and failed sessions clearly enough for operator triage.
