@@ -17,59 +17,74 @@ from vpn_client.provider_compiler import build_provider_profile_manifest
 from vpn_client.security import generate_keypair, sign_payload
 
 
-def main() -> None:
-    EXAMPLES.mkdir(parents=True, exist_ok=True)
+def _platform_capabilities() -> dict[str, object]:
+    return {
+        "linux": {
+            "platform": "linux",
+            "supported_dataplanes": ["linux-userspace", "xray-core", "routed"],
+            "network_adapter": "linux",
+            "startup_reconciliation": True,
+            "status": "mvp-supported",
+            "notes": "Linux keeps the real command-planning network adapter in this repository.",
+        },
+        "windows": {
+            "platform": "windows",
+            "supported_dataplanes": ["xray-core", "routed"],
+            "network_adapter": "windows",
+            "status": "bridge-only",
+            "notes": "Desktop Windows path is expected to use xray-core with a native route and DNS adapter.",
+        },
+        "macos": {
+            "platform": "macos",
+            "supported_dataplanes": ["xray-core", "routed"],
+            "network_adapter": "macos",
+            "status": "planned",
+            "notes": "macOS path needs a platform adapter that can evolve toward Network Extension integration.",
+        },
+        "android": {
+            "platform": "android",
+            "supported_dataplanes": ["xray-core", "routed"],
+            "network_adapter": "android",
+            "status": "planned",
+            "notes": "Android path is intended to sit on top of the VpnService lifecycle.",
+        },
+        "ios": {
+            "platform": "ios",
+            "supported_dataplanes": ["ios-bridge", "routed"],
+            "network_adapter": "ios",
+            "status": "planned",
+            "notes": "iOS path uses the ios-bridge contract and a future Network Extension runtime.",
+        },
+    }
 
-    private_pem, public_pem = generate_keypair()
-    (EXAMPLES / "demo_private_key.pem").write_bytes(private_pem)
-    (EXAMPLES / "demo_public_key.pem").write_bytes(public_pem)
 
+def build_demo_manifest(private_pem: bytes) -> dict[str, object]:
     manifest = {
         "version": 1,
         "schema_version": 1,
         "generated_at": "2026-04-23T00:00:00Z",
         "expires_at": "2026-04-30T00:00:00Z",
-        "platform_capabilities": {
-            "linux": {
-                "platform": "linux",
-                "supported_dataplanes": ["linux-userspace", "xray-core", "routed"],
-                "network_adapter": "linux",
-                "startup_reconciliation": True,
-                "status": "prototype",
-                "notes": "Linux keeps the real command-planning network adapter in this repository.",
-            },
-            "windows": {
-                "platform": "windows",
-                "supported_dataplanes": ["xray-core", "routed"],
-                "network_adapter": "windows",
-                "status": "planned",
-                "notes": "Desktop Windows path is expected to use xray-core with a native route and DNS adapter.",
-            },
-            "macos": {
-                "platform": "macos",
-                "supported_dataplanes": ["xray-core", "routed"],
-                "network_adapter": "macos",
-                "status": "planned",
-                "notes": "macOS path needs a platform adapter that can evolve toward Network Extension integration.",
-            },
-            "android": {
-                "platform": "android",
-                "supported_dataplanes": ["xray-core", "routed"],
-                "network_adapter": "android",
-                "status": "planned",
-                "notes": "Android path is intended to sit on top of the VpnService lifecycle.",
-            },
-            "ios": {
-                "platform": "ios",
-                "supported_dataplanes": ["ios-bridge", "routed"],
-                "network_adapter": "ios",
-                "status": "planned",
-                "notes": "iOS path uses the ios-bridge contract and a future Network Extension runtime.",
-            },
-        },
+        "platform_capabilities": _platform_capabilities(),
         "features": {
             "remote_disable_quic": False,
             "support_bundle_enabled": True,
+            "runtime_support_policy": {
+                "default": {
+                    "enforce_contract_match": True,
+                }
+            },
+            "runtime_tick_policy": {
+                "default": {
+                    "reevaluate_pending_transports_limit": 1,
+                }
+            },
+            "session_health_policy": {
+                "default": {
+                    "checks": 0,
+                    "auto_reconnect": False,
+                    "failure_threshold": 3,
+                }
+            },
         },
         "network_policy": {
             "tunnel_mode": "full",
@@ -137,10 +152,11 @@ def main() -> None:
             },
         ],
     }
-
     manifest["signature"] = sign_payload(private_pem, canonical_manifest_bytes(manifest))
-    (EXAMPLES / "demo_manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+    return manifest
 
+
+def build_provider_profile_example(private_pem: bytes, platform_capabilities: dict[str, object]) -> dict[str, object]:
     logical_server = {
         "logical_server": "spb-main",
         "host": "198.51.100.40",
@@ -234,9 +250,15 @@ def main() -> None:
         provider_profile_schema_version=1,
         generated_at="2026-04-23T00:00:00Z",
         expires_at="2026-04-30T00:00:00Z",
-        platform_capabilities=manifest["platform_capabilities"],
+        platform_capabilities=platform_capabilities,
         features={"support_bundle_enabled": True},
-        network_policy=manifest["network_policy"],
+        network_policy={
+            "tunnel_mode": "full",
+            "dns_mode": "vpn_only",
+            "kill_switch_enabled": True,
+            "ipv6_enabled": False,
+            "allow_lan_while_connected": False,
+        },
         transport_policy={
             "preferred_order": ["https"],
             "connect_timeout_ms": 2500,
@@ -249,6 +271,19 @@ def main() -> None:
         private_pem,
         canonical_manifest_bytes(provider_profile_manifest),
     )
+    return provider_profile_manifest
+
+
+def main() -> None:
+    EXAMPLES.mkdir(parents=True, exist_ok=True)
+
+    private_pem, public_pem = generate_keypair()
+    (EXAMPLES / "demo_private_key.pem").write_bytes(private_pem)
+    (EXAMPLES / "demo_public_key.pem").write_bytes(public_pem)
+
+    manifest = build_demo_manifest(private_pem)
+    (EXAMPLES / "demo_manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+    provider_profile_manifest = build_provider_profile_example(private_pem, manifest["platform_capabilities"])
     (EXAMPLES / "provider_profile_manifest.json").write_text(
         json.dumps(provider_profile_manifest, indent=2),
         encoding="utf-8",
