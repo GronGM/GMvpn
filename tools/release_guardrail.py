@@ -307,6 +307,44 @@ def _check_structural_artifact_parity() -> list[str]:
                 f"was '{parsed.get('linux_reconciliation_missing_commands')}', expected '{expected_missing_commands}' from support bundle"
             )
 
+    returncode, stdout, bundle = _run_cli_and_collect(
+        "--platform",
+        "linux",
+        "--client-platform",
+        "linux",
+        "--dataplane",
+        "xray-core",
+        "--apply-network-changes",
+    )
+    if returncode != 1:
+        failures.append(
+            f"structural artifact parity: linux preflight CLI scenario returned {returncode}, expected 1"
+        )
+        return failures
+    parsed = _parse_cli_output(stdout)
+    extra = bundle["extra"]
+
+    linux_execution = extra.get("linux_execution")
+    if linux_execution is not None:
+        expected_execution_action = str(linux_execution["action"])
+        if parsed.get("linux_execution_action") != expected_execution_action:
+            failures.append(
+                "structural artifact parity: CLI field 'linux_execution_action' "
+                f"was '{parsed.get('linux_execution_action')}', expected '{expected_execution_action}' from support bundle"
+            )
+        expected_failure_reason = str(linux_execution["failure_reason_code"])
+        if parsed.get("linux_execution_failure_reason") != expected_failure_reason:
+            failures.append(
+                "structural artifact parity: CLI field 'linux_execution_failure_reason' "
+                f"was '{parsed.get('linux_execution_failure_reason')}', expected '{expected_failure_reason}' from support bundle"
+            )
+        expected_execution_missing_commands = ",".join(linux_execution["missing_commands"])
+        if (parsed.get("linux_execution_missing_commands") or "") != expected_execution_missing_commands:
+            failures.append(
+                "structural artifact parity: CLI field 'linux_execution_missing_commands' "
+                f"was '{parsed.get('linux_execution_missing_commands')}', expected '{expected_execution_missing_commands}' from support bundle"
+            )
+
     mismatch_manifest = {
         "version": 1,
         "generated_at": "2026-04-23T00:00:00Z",

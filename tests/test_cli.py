@@ -192,6 +192,68 @@ class CliTests(unittest.TestCase):
             else:
                 self.assertNotIn("linux_reconciliation_missing_commands=", output)
 
+    def test_cli_prints_linux_execution_summary_for_preflight_failure(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        source_manifest = json.loads((root / "examples" / "demo_manifest.json").read_text(encoding="utf-8"))
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            private_pem, public_pem = generate_keypair()
+            manifest = tmp_path / "demo_manifest.json"
+            public_key = tmp_path / "demo_public_key.pem"
+            source_manifest["signature"] = sign_payload(private_pem, canonical_manifest_bytes(source_manifest))
+            manifest.write_text(json.dumps(source_manifest), encoding="utf-8")
+            public_key.write_bytes(public_pem)
+            support_bundle = tmp_path / "bundle.json"
+            stdout = io.StringIO()
+
+            argv = [
+                "vpn-client",
+                "--manifest",
+                str(manifest),
+                "--public-key",
+                str(public_key),
+                "--cache-dir",
+                str(tmp_path / "cache"),
+                "--state-file",
+                str(tmp_path / "state.json"),
+                "--runtime-marker",
+                str(tmp_path / "runtime-marker.json"),
+                "--backend-state-file",
+                str(tmp_path / "backend-state.json"),
+                "--support-bundle",
+                str(support_bundle),
+                "--platform",
+                "linux",
+                "--client-platform",
+                "linux",
+                "--dataplane",
+                "xray-core",
+                "--apply-network-changes",
+            ]
+
+            with patch("sys.argv", argv), contextlib.redirect_stdout(stdout):
+                exit_code = cli.main()
+
+            output = stdout.getvalue()
+            payload = json.loads(support_bundle.read_text(encoding="utf-8"))
+            linux_execution = payload["extra"]["linux_execution"]
+
+            self.assertEqual(exit_code, 1)
+            self.assertEqual(linux_execution["action"], "apply")
+            self.assertIn(f"linux_execution_action={linux_execution['action']}", output)
+            failure_reason = linux_execution["failure_reason_code"]
+            if failure_reason is not None:
+                self.assertIn(f"linux_execution_failure_reason={failure_reason}", output)
+            else:
+                self.assertNotIn("linux_execution_failure_reason=", output)
+            missing_commands = linux_execution["missing_commands"]
+            expected_missing_line = f"linux_execution_missing_commands={','.join(missing_commands)}"
+            if missing_commands:
+                self.assertIn(expected_missing_line, output)
+            else:
+                self.assertNotIn("linux_execution_missing_commands=", output)
+
     def test_cli_prints_incident_summary_for_degraded_session(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)
