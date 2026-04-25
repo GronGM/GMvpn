@@ -426,6 +426,8 @@ def main() -> int:
     print(f"runtime_marker_present={runtime_state.load_marker() is not None}")
     if state_manager.state.last_connected_endpoint_id is not None:
         print(f"last_connected_endpoint_id={state_manager.state.last_connected_endpoint_id}")
+    print(f"session_health_fail_streak={state_manager.state.session_health_fail_streak}")
+    print(f"session_health_fail_bucket={state_manager.state.session_health_fail_bucket}")
     if recovery_report.actions:
         print(f"startup_recovery_actions_count={len(recovery_report.actions)}")
     if local_incident_guidance_source is not None:

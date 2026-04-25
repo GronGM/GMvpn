@@ -153,8 +153,30 @@ class CliTests(unittest.TestCase):
             manifest["signature"] = sign_payload(private_pem, canonical_manifest_bytes(manifest))
             manifest_path = tmp_path / "manifest.json"
             public_key_path = tmp_path / "public.pem"
+            state_path = tmp_path / "state.json"
             manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
             public_key_path.write_bytes(public_pem)
+            state_path.write_text(
+                json.dumps(
+                    {
+                        "endpoint_health": {},
+                        "last_connected_endpoint_id": None,
+                        "incident_flags": {},
+                        "incident_flag_expires_at": {},
+                        "transport_crash_streaks": {},
+                        "transport_crash_buckets": {},
+                        "transport_crash_reasons": {},
+                        "transport_soft_fail_streaks": {},
+                        "transport_soft_fail_buckets": {},
+                        "transport_reenable_pending": {},
+                        "transport_reenable_not_before": {},
+                        "transport_reenable_fail_streaks": {},
+                        "session_health_fail_streak": 1,
+                        "session_health_fail_bucket": "tls_interference:tls_handshake_failed",
+                    }
+                ),
+                encoding="utf-8",
+            )
             stdout = io.StringIO()
 
             argv = [
@@ -166,7 +188,7 @@ class CliTests(unittest.TestCase):
                 "--cache-dir",
                 str(tmp_path / "cache"),
                 "--state-file",
-                str(tmp_path / "state.json"),
+                str(state_path),
                 "--runtime-marker",
                 str(tmp_path / "runtime-marker.json"),
                 "--backend-state-file",
@@ -190,6 +212,8 @@ class CliTests(unittest.TestCase):
             self.assertIn("runtime_support_tier=development-only", output)
             self.assertIn("severity=warning", output)
             self.assertIn("failure_class=tls_interference", output)
+            self.assertIn("session_health_fail_streak=1", output)
+            self.assertIn("session_health_fail_bucket=tls_interference:tls_handshake_failed", output)
             self.assertIn(
                 "recommended_action=Try an alternate transport or resolver path and inspect local interference signals before retrying.",
                 output,
@@ -199,6 +223,8 @@ class CliTests(unittest.TestCase):
             self.assertEqual(payload["events"][-1]["failure_class"], "tls_interference")
             self.assertEqual(payload["events"][-1]["incident_severity"], "warning")
             self.assertIsNone(payload["events"][-1]["primary_transport_issue"])
+            self.assertEqual(payload["extra"]["session_health_fail_streak"], 1)
+            self.assertEqual(payload["extra"]["session_health_fail_bucket"], "tls_interference:tls_handshake_failed")
 
     def test_cli_resolves_manifest_session_health_policy_defaults(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
