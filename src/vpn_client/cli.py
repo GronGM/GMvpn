@@ -342,7 +342,7 @@ def main() -> int:
     )
     runtime_tick_limit = (
         max(args.reevaluate_pending_transports, 1)
-        if args.reevaluate_pending_transports is not None and args.reevaluate_pending-transports > 0
+        if args.reevaluate_pending_transports is not None and args.reevaluate_pending_transports > 0
         else resolved_runtime_tick_policy.reevaluate_pending_transports_limit
     )
     if not runtime_support_gate_blocked and effective_health_checks > 0 and report.state is SessionState.CONNECTED:
