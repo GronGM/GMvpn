@@ -1,28 +1,23 @@
 # Resilient VPN Client
 
-This repository is the first working foundation for an open-source VPN client aimed at high resilience, security, and maintainability under unstable and adversarial network conditions.
+This repository is a Linux-first prototype for a resilient open-source VPN client built for unstable, degraded, and operationally hostile network conditions.
 
-Current scope:
+What exists today:
 
-- signed configuration manifests with local verification;
-- transport abstraction for multiple delivery profiles;
-- session orchestration with failover and known-good tracking;
-- local network policy layer with kill switch semantics;
-- persistent local state for endpoint health and incident flags;
-- data-plane backend abstraction with Linux-first userspace backend;
-- xray-core backend skeleton for desktop and Android-oriented runtimes;
-- privacy-safe telemetry and support bundle export;
-- probe engine with coarse network error classification;
-- CLI demo for local testing;
-- unit tests covering trust and orchestration behavior.
+- signed manifests with local signature verification;
+- explicit manifest and provider-profile schema versions;
+- shared session orchestration with failover, cooldowns, and known-good reuse;
+- provider-profile compilation and strict platform capability validation;
+- Linux platform command planning with startup reconciliation diagnostics;
+- `xray-core` config rendering and backend lifecycle management;
+- privacy-safe support bundle export and incident-oriented diagnostics;
+- CLI workflows for local dry-run and recovery testing;
+- unit tests plus a compact release guardrail for release-facing checks.
 
-Manifest files now also carry an explicit top-level `schema_version`.
-Provider-style manifests additionally carry `provider_profile_schema_version`.
-The loader currently supports version `1` for both contracts and will reject unsupported future versions until compatibility logic is expanded deliberately.
-Compatibility and migration rules are documented in [docs/schema-compatibility.md](/workspace/docs/schema-compatibility.md).
-Operational docs now also include [docs/release-checklist.md](/workspace/docs/release-checklist.md) and [docs/incident-playbook.md](/workspace/docs/incident-playbook.md).
+Compatibility rules are documented in [docs/schema-compatibility.md](/workspace/docs/schema-compatibility.md).
+Operational docs live in [docs/release-checklist.md](/workspace/docs/release-checklist.md), [docs/incident-playbook.md](/workspace/docs/incident-playbook.md), and [docs/roadmap.md](/workspace/docs/roadmap.md).
 
-This is not a production VPN yet. It is the control-plane and orchestration skeleton that a production-grade client can grow on top of.
+This is still not a production-ready cross-platform VPN client. The repository is best read as a control-plane and runtime-hardening foundation with one honest MVP contour, not as a finished end-user product.
 
 ## Honest MVP Target
 
@@ -36,9 +31,19 @@ This is the contour we treat as the first release-track runtime for hardening an
 
 Everything else should be read more conservatively:
 
-- `linux-userspace` remains a useful reference and debugging path, but it is not the first MVP release contour;
+- `linux-userspace` remains a useful reference and debugging path, but it is not the release-track contour;
 - `windows`, `macos`, and `android` follow the same product model but still depend on placeholder-level platform adapters in this repository today;
-- `ios` remains bridge-only until a real Apple `Network Extension` runtime exists.
+- `ios` remains bridge-only until a real Apple `Network Extension` runtime exists;
+- the support bundle and release checklist are intentionally anchored on the Linux Xray contour first.
+
+## Current Repository Status
+
+The current repository state is intentionally conservative:
+
+- the default CLI stays in dry-run-friendly mode and does not apply Linux network changes unless `--apply-network-changes` is set;
+- the CLI default dataplane is still `routed` for local testing, so the release-track contour should be selected explicitly when you want to exercise the MVP path;
+- runtime support assessment is explicit, and only `linux + xray-core + linux adapter` is currently assessed as `mvp-supported`;
+- Xray-backed runs in real mode fail fast if the binary is missing or the rendered config does not pass Xray preflight validation.
 
 ## Repository Layout
 
@@ -55,19 +60,30 @@ Everything else should be read more conservatively:
 python tools/generate_demo_assets.py
 ```
 
-2. Run the CLI demo:
+2. Run the Linux MVP contour in dry-run mode:
 
 ```bash
 PYTHONPATH=src python -m vpn_client.cli \
   --manifest examples/demo_manifest.json \
   --public-key examples/demo_public_key.pem \
+  --platform linux \
+  --client-platform linux \
+  --dataplane xray-core \
   --support-bundle output/demo-support-bundle.json
 ```
+
+This keeps Linux command planning in dry-run mode while still rendering the release-track Xray runtime path and exporting a support bundle.
 
 3. Run tests:
 
 ```bash
 PYTHONPATH=src python -m unittest discover -s tests -v
+```
+
+4. Run the compact release guardrail:
+
+```bash
+python tools/release_guardrail.py
 ```
 
 Pull requests and pushes to `main` are now expected to keep the CI test workflow green.
@@ -84,10 +100,11 @@ Before cutting or reviewing a release candidate, you can also run the compact re
 
 Linux-first network planning stays in dry-run mode by default and prints the command plan it would apply.
 The data-plane backends also stay in dry-run mode by default and print the command they would launch.
+When you leave dry-run for `xray-core`, the client checks that the Xray binary exists and validates the rendered config before attempting startup.
 
 ## Xray Direction
 
-The repository now treats `xray-core` as the primary engine direction for `Windows`, `macOS`, and `Android` style runtimes while keeping the product config model independent from raw Xray JSON.
+The repository now treats `xray-core` as the release-track dataplane for the first Linux MVP contour and as the long-term engine direction for desktop-class and Android-style runtimes, while keeping the product config model independent from raw Xray JSON.
 
 - `xray-core` is wired in as a concrete `DataPlaneBackend`;
 - endpoint metadata can now carry Xray-specific rendering fields such as protocol, stream, and TLS or Reality settings;
@@ -120,7 +137,7 @@ An endpoint can provide the minimum Xray renderer inputs through `metadata`:
 }
 ```
 
-The CLI now defaults to `--dataplane routed` in dry-run mode.
+The CLI still defaults to `--dataplane routed` in dry-run mode for local safety, so use `--dataplane xray-core` when you want to exercise the MVP path directly.
 
 Endpoints that declare `metadata.dataplane = "xray-core"` are now validated during manifest load, so broken Xray profiles fail early instead of surfacing later as opaque runtime connect errors.
 Endpoints without an explicit dataplane declaration stay on the default `linux-userspace` backend, which lets one manifest safely mix native-style and Xray-backed profiles.
@@ -134,8 +151,8 @@ The CLI now separates the local test network stack from the target client runtim
 
 Current backend policy:
 
-- `linux` defaults to `linux-userspace`;
-- `windows`, `macos`, and `android` default to `xray-core`;
+- CLI defaults stay conservative for local runs: `--dataplane routed` unless you choose another backend explicitly;
+- `windows`, `macos`, and `android` default to `xray-core` when modeled as target client platforms;
 - `ios` defaults to `ios-bridge`, which currently renders a tunnel contract but still stops before a real Apple runtime starts.
 
 This keeps the architecture honest: `iOS` is now a separate contract path in the codebase, but still remains a separate engineering track until a dedicated bridge/runtime exists.
