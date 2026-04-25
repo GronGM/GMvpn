@@ -447,6 +447,121 @@ def _check_operational_tail_parity() -> list[str]:
     return failures
 
 
+def _check_state_continuity_parity() -> list[str]:
+    failures: list[str] = []
+
+    connected_state = {
+        "endpoint_health": {},
+        "last_connected_endpoint_id": None,
+        "incident_flags": {"disable_transport_https": False},
+        "incident_flag_expires_at": {"disable_transport_https": "2020-01-01T00:00:00+00:00"},
+        "transport_crash_streaks": {},
+        "transport_crash_buckets": {},
+        "transport_crash_reasons": {},
+        "transport_soft_fail_streaks": {},
+        "transport_soft_fail_buckets": {},
+        "transport_reenable_pending": {"https": True},
+        "transport_reenable_not_before": {"https": "2020-01-01T00:00:00+00:00"},
+        "transport_reenable_fail_streaks": {},
+        "session_health_fail_streak": 0,
+        "session_health_fail_bucket": "",
+    }
+    returncode, stdout, bundle = _run_cli_and_collect(
+        "--platform",
+        "simulated",
+        "--dataplane",
+        "null",
+        state_payload=connected_state,
+    )
+    if returncode != 0:
+        return [f"state continuity parity: connected CLI scenario failed with exit code {returncode}"]
+    parsed = _parse_cli_output(stdout)
+    extra = bundle["extra"]
+
+    expected_marker_present = str(bool(extra["runtime_marker_present"]))
+    if parsed.get("runtime_marker_present") != expected_marker_present:
+        failures.append(
+            "state continuity parity: CLI field 'runtime_marker_present' "
+            f"was '{parsed.get('runtime_marker_present')}', expected '{expected_marker_present}' from support bundle"
+        )
+
+    expected_last_connected = str(extra["last_connected_endpoint_id"])
+    if parsed.get("last_connected_endpoint_id") != expected_last_connected:
+        failures.append(
+            "state continuity parity: CLI field 'last_connected_endpoint_id' "
+            f"was '{parsed.get('last_connected_endpoint_id')}', expected '{expected_last_connected}' from support bundle"
+        )
+
+    degraded_manifest = {
+        "version": 1,
+        "generated_at": "2026-04-23T00:00:00Z",
+        "expires_at": "2026-04-30T00:00:00Z",
+        "features": {"support_bundle_enabled": True},
+        "transport_policy": {
+            "preferred_order": ["quic"],
+            "connect_timeout_ms": 2500,
+            "retry_budget": 1,
+            "probe_timeout_ms": 1000,
+        },
+        "network_policy": {
+            "tunnel_mode": "full",
+            "dns_mode": "vpn_only",
+            "kill_switch_enabled": True,
+            "ipv6_enabled": False,
+            "allow_lan_while_connected": False,
+        },
+        "endpoints": [
+            {
+                "id": "quic-1",
+                "host": "198.51.100.30",
+                "port": 443,
+                "transport": "quic",
+                "region": "eu-central",
+                "tags": [],
+                "metadata": {"simulated_failure": "tls"},
+            }
+        ],
+    }
+    returncode, stdout, bundle = _run_custom_cli_and_collect(
+        degraded_manifest,
+        args=("--platform", "simulated", "--dataplane", "null"),
+        state_payload={
+            "endpoint_health": {},
+            "last_connected_endpoint_id": None,
+            "incident_flags": {},
+            "incident_flag_expires_at": {},
+            "transport_crash_streaks": {},
+            "transport_crash_buckets": {},
+            "transport_crash_reasons": {},
+            "transport_soft_fail_streaks": {},
+            "transport_soft_fail_buckets": {},
+            "transport_reenable_pending": {},
+            "transport_reenable_not_before": {},
+            "transport_reenable_fail_streaks": {},
+            "session_health_fail_streak": 1,
+            "session_health_fail_bucket": "tls_interference:tls_handshake_failed",
+        },
+    )
+    if returncode != 1:
+        failures.append(f"state continuity parity: degraded CLI scenario returned {returncode}, expected 1")
+        return failures
+    parsed = _parse_cli_output(stdout)
+    extra = bundle["extra"]
+
+    degraded_pairs = (
+        ("session_health_fail_streak", str(extra["session_health_fail_streak"])),
+        ("session_health_fail_bucket", str(extra["session_health_fail_bucket"])),
+    )
+    for key, expected in degraded_pairs:
+        actual = parsed.get(key)
+        if actual != expected:
+            failures.append(
+                f"state continuity parity: CLI field '{key}' was '{actual}', expected '{expected}' from support bundle"
+            )
+
+    return failures
+
+
 def _check_release_artifact_policy() -> list[str]:
     failures: list[str] = []
 
@@ -882,6 +997,7 @@ def main() -> int:
         failures.extend(_check_incident_narrative_consistency())
         failures.extend(_check_structural_artifact_parity())
         failures.extend(_check_operational_tail_parity())
+        failures.extend(_check_state_continuity_parity())
         if args.run_local_checks:
             failures.extend(_run_local_checks())
 
@@ -900,6 +1016,7 @@ def main() -> int:
     print("- incident narrative stays aligned across CLI, telemetry, and support bundle")
     print("- structural run facts stay aligned across CLI and support bundle")
     print("- operational tail counts stay aligned across CLI and support bundle")
+    print("- state continuity facts stay aligned across CLI and support bundle")
     if args.run_local_checks:
         print("- local compileall and unittest checks passed")
     return 0
