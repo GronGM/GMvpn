@@ -157,6 +157,10 @@ class ReleaseGuardrailTests(unittest.TestCase):
         failures = release_guardrail._check_operational_tail_parity()
         self.assertEqual(failures, [])
 
+    def test_state_continuity_parity_passes(self) -> None:
+        failures = release_guardrail._check_state_continuity_parity()
+        self.assertEqual(failures, [])
+
 
 if __name__ == "__main__":
     unittest.main()

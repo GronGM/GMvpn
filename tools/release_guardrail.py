@@ -447,6 +447,54 @@ def _check_operational_tail_parity() -> list[str]:
     return failures
 
 
+def _check_state_continuity_parity() -> list[str]:
+    failures: list[str] = []
+
+    connected_state = {
+        "endpoint_health": {},
+        "last_connected_endpoint_id": None,
+        "incident_flags": {"disable_transport_https": False},
+        "incident_flag_expires_at": {"disable_transport_https": "2020-01-01T00:00:00+00:00"},
+        "transport_crash_streaks": {},
+        "transport_crash_buckets": {},
+        "transport_crash_reasons": {},
+        "transport_soft_fail_streaks": {},
+        "transport_soft_fail_buckets": {},
+        "transport_reenable_pending": {"https": True},
+        "transport_reenable_not_before": {"https": "2020-01-01T00:00:00+00:00"},
+        "transport_reenable_fail_streaks": {},
+        "session_health_fail_streak": 0,
+        "session_health_fail_bucket": "",
+    }
+    returncode, stdout, bundle = _run_cli_and_collect(
+        "--platform",
+        "simulated",
+        "--dataplane",
+        "null",
+        state_payload=connected_state,
+    )
+    if returncode != 0:
+        return [f"state continuity parity: connected CLI scenario failed with exit code {returncode}"]
+    parsed = _parse_cli_output(stdout)
+    extra = bundle["extra"]
+
+    expected_marker_present = str(bool(extra["runtime_marker_present"]))
+    if parsed.get("runtime_marker_present") != expected_marker_present:
+        failures.append(
+            "state continuity parity: CLI field 'runtime_marker_present' "
+            f"was '{parsed.get('runtime_marker_present')}', expected '{expected_marker_present}' from support bundle"
+        )
+
+    expected_last_connected = str(extra["last_connected_endpoint_id"])
+    if parsed.get("last_connected_endpoint_id") != expected_last_connected:
+        failures.append(
+            "state continuity parity: CLI field 'last_connected_endpoint_id' "
+            f"was '{parsed.get('last_connected_endpoint_id')}', expected '{expected_last_connected}' from support bundle"
+        )
+
+    return failures
+
+
 def _check_release_artifact_policy() -> list[str]:
     failures: list[str] = []
 
@@ -882,6 +930,7 @@ def main() -> int:
         failures.extend(_check_incident_narrative_consistency())
         failures.extend(_check_structural_artifact_parity())
         failures.extend(_check_operational_tail_parity())
+        failures.extend(_check_state_continuity_parity())
         if args.run_local_checks:
             failures.extend(_run_local_checks())
 
@@ -900,6 +949,7 @@ def main() -> int:
     print("- incident narrative stays aligned across CLI, telemetry, and support bundle")
     print("- structural run facts stay aligned across CLI and support bundle")
     print("- operational tail counts stay aligned across CLI and support bundle")
+    print("- state continuity facts stay aligned across CLI and support bundle")
     if args.run_local_checks:
         print("- local compileall and unittest checks passed")
     return 0
