@@ -10,11 +10,14 @@ This playbook describes the default operator triage flow for the first honest MV
 
 Use it for degraded sessions, failed sessions, repeated transport disable events, and startup recovery after abnormal exits.
 
+Everything outside that contour should be treated as development-track work unless explicitly escalated.
+
 ## First Response
 
 - Capture the CLI output from the failing run.
 - Export a support bundle if one is not already available.
 - Record the manifest version and the runtime contour in use.
+- Record whether the operator used CLI defaults or explicitly selected the Linux Xray contour.
 - Confirm whether the run is inside MVP scope by checking `runtime_support`.
 
 If `runtime_support.in_mvp_scope` is `false`, treat the incident as outside the first supported release contour unless explicitly escalated for development work.
@@ -174,6 +177,13 @@ For the current MVP contour, focus on these ownership boundaries:
   - reason-aware hysteresis
 
 This separation matters because it tells you where to fix the bug instead of masking it with more retries.
+
+Also remember one practical source of confusion during triage:
+
+- the CLI default dataplane remains `routed` for local safety;
+- MVP support expectations are anchored on an explicit `--dataplane xray-core` Linux run.
+
+If the incident came from a default local CLI invocation, first confirm whether it is actually evidence about the release-track contour.
 
 ## When To Roll Back
 
