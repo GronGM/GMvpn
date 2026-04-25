@@ -239,6 +239,8 @@ def _check_structural_artifact_parity() -> list[str]:
     connected_pairs = (
         ("endpoint", str(extra["selected_endpoint_id"])),
         ("transport", str(extra["selected_transport"])),
+        ("dataplane_backend", str(extra["dataplane_runtime"]["backend"])),
+        ("dataplane_restarts", str(extra["dataplane_runtime"]["restart_count"])),
     )
     for key, expected in connected_pairs:
         actual = parsed.get(key)
@@ -352,6 +354,20 @@ def _check_structural_artifact_parity() -> list[str]:
         failures.append(
             "structural artifact parity: CLI field 'runtime_support_gate_blocked' "
             f"was '{parsed.get('runtime_support_gate_blocked')}', expected '{expected_gate_blocked}' from support bundle"
+        )
+
+    expected_runtime_support_summary = str(extra["runtime_support"]["summary"])
+    if parsed.get("runtime_support_summary") != expected_runtime_support_summary:
+        failures.append(
+            "structural artifact parity: CLI field 'runtime_support_summary' "
+            f"was '{parsed.get('runtime_support_summary')}', expected '{expected_runtime_support_summary}' from support bundle"
+        )
+
+    expected_runtime_support_caveats = " | ".join(extra["runtime_support"]["caveats"])
+    if parsed.get("runtime_support_caveats") != expected_runtime_support_caveats:
+        failures.append(
+            "structural artifact parity: CLI field 'runtime_support_caveats' "
+            f"was '{parsed.get('runtime_support_caveats')}', expected '{expected_runtime_support_caveats}' from support bundle"
         )
 
     return failures
@@ -819,6 +835,84 @@ def _check_incident_narrative_consistency() -> list[str]:
                 f"incident narrative consistency: telemetry field '{field}' was '{telemetry_value}', expected '{bundle_value}'"
             )
 
+    override_manifest = {
+        "version": 1,
+        "generated_at": "2026-04-23T00:00:00Z",
+        "expires_at": "2026-04-30T00:00:00Z",
+        "schema_version": 1,
+        "features": {
+            "support_bundle_enabled": True,
+        },
+        "transport_policy": {
+            "preferred_order": ["quic"],
+            "connect_timeout_ms": 2500,
+            "retry_budget": 1,
+            "probe_timeout_ms": 1000,
+        },
+        "network_policy": {
+            "tunnel_mode": "full",
+            "dns_mode": "vpn_only",
+            "kill_switch_enabled": True,
+            "ipv6_enabled": False,
+            "allow_lan_while_connected": False,
+        },
+        "endpoints": [
+            {
+                "id": "quic-1",
+                "host": "198.51.100.30",
+                "port": 443,
+                "transport": "quic",
+                "region": "eu-central",
+                "tags": [],
+                "metadata": {"simulated_failure": "tls"},
+            }
+        ],
+    }
+    override_state = {
+        "endpoint_health": {},
+        "last_connected_endpoint_id": None,
+        "incident_flags": {},
+        "incident_flag_expires_at": {},
+        "transport_crash_streaks": {},
+        "transport_crash_buckets": {},
+        "transport_crash_reasons": {},
+        "transport_soft_fail_streaks": {},
+        "transport_soft_fail_buckets": {},
+        "transport_reenable_pending": {},
+        "transport_reenable_not_before": {},
+        "transport_reenable_fail_streaks": {},
+        "session_health_fail_streak": 1,
+        "session_health_fail_bucket": "tls_interference:tls_handshake_failed",
+    }
+    returncode, stdout, bundle = _run_custom_cli_and_collect(
+        override_manifest,
+        state_payload=override_state,
+        cache_files={
+            "incident-guidance.json": json.dumps(
+                {
+                    "tls_interference": {
+                        "severity": "critical",
+                        "recommended_action": "Auto-loaded local guidance.",
+                    }
+                }
+            )
+        },
+        args=("--platform", "simulated", "--dataplane", "null"),
+    )
+    if returncode != 1:
+        failures.append(
+            f"incident narrative consistency: local-guidance CLI scenario returned {returncode}, expected 1"
+        )
+        return failures
+
+    parsed = _parse_cli_output(stdout)
+    expected_guidance_source = str(bundle["extra"]["local_incident_guidance_source"])
+    if parsed.get("incident_guidance_source") != expected_guidance_source:
+        failures.append(
+            "incident narrative consistency: CLI field 'incident_guidance_source' "
+            f"was '{parsed.get('incident_guidance_source')}', expected '{expected_guidance_source}'"
+        )
+
     return failures
 
 
@@ -827,6 +921,7 @@ def _run_custom_cli_and_collect(
     *,
     args: tuple[str, ...],
     state_payload: dict | None = None,
+    cache_files: dict[str, str] | None = None,
 ) -> tuple[int, str, dict[str, object]]:
     with tempfile.TemporaryDirectory() as tmp:
         tmp_path = Path(tmp)
@@ -844,6 +939,13 @@ def _run_custom_cli_and_collect(
         public_key_path.write_bytes(public_pem)
         if state_payload is not None:
             state_path.write_text(json.dumps(state_payload), encoding="utf-8")
+        if cache_files:
+            cache_dir = tmp_path / "cache"
+            cache_dir.mkdir(parents=True, exist_ok=True)
+            for relative_path, content in cache_files.items():
+                cache_path = cache_dir / relative_path
+                cache_path.parent.mkdir(parents=True, exist_ok=True)
+                cache_path.write_text(content, encoding="utf-8")
 
         command = [
             sys.executable,
