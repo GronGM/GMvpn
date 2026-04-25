@@ -1045,6 +1045,8 @@ class CliTests(unittest.TestCase):
                 str(tmp_path / "runtime-marker.json"),
                 "--backend-state-file",
                 str(tmp_path / "backend-state.json"),
+                "--support-bundle",
+                str(tmp_path / "bundle.json"),
                 "--platform",
                 "simulated",
                 "--client-platform",
@@ -1057,9 +1059,32 @@ class CliTests(unittest.TestCase):
                 exit_code = cli.main()
 
             output = stdout.getvalue()
+            payload = json.loads((tmp_path / "bundle.json").read_text(encoding="utf-8"))
             self.assertEqual(exit_code, 0)
             self.assertIn("endpoint=spb-main-desktop", output)
             self.assertIn("dataplane_backend=xray-core", output)
+            self.assertIn("runtime_support_tier=development-only", output)
+            self.assertIn("endpoint_selection_summary=selected spb-main-desktop", output)
+            self.assertEqual(payload["extra"]["selected_endpoint_id"], "spb-main-desktop")
+            self.assertEqual(payload["extra"]["endpoint_selection"]["client_platform"], "android")
+            self.assertEqual(
+                payload["extra"]["endpoint_selection"]["candidate_order"],
+                ["spb-main-desktop", "spb-main-android-alt"],
+            )
+            self.assertEqual(payload["extra"]["runtime_support"]["client_platform"], "android")
+            self.assertEqual(payload["extra"]["runtime_support"]["tier"], "development-only")
+            self.assertEqual(
+                payload["extra"]["runtime_support"]["declared_platform_capability"]["network_adapter"],
+                "android",
+            )
+            self.assertEqual(
+                payload["extra"]["runtime_support"]["declared_platform_capability"]["supported_dataplanes"],
+                ["xray-core", "routed"],
+            )
+            self.assertEqual(payload["extra"]["dataplane_runtime"]["backend"], "xray-core")
+            self.assertEqual(payload["extra"]["dataplane_runtime"]["active_backend"], "xray-core")
+            self.assertEqual(payload["extra"]["dataplane_runtime"]["router_backend"], "routed")
+            self.assertEqual(payload["extra"]["dataplane_runtime"]["client_platform"], "android")
 
 
 if __name__ == "__main__":

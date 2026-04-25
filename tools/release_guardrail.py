@@ -581,6 +581,81 @@ def _check_state_continuity_parity() -> list[str]:
     return failures
 
 
+def _check_runtime_selection_reporting() -> list[str]:
+    failures: list[str] = []
+    payload = json.loads(_read_text(PROVIDER_PROFILE_MANIFEST))
+    returncode, stdout, bundle = _run_custom_cli_and_collect(
+        payload,
+        args=("--platform", "simulated", "--client-platform", "android", "--dataplane", "routed"),
+    )
+    if returncode != 0:
+        return [f"runtime selection reporting: provider-profile CLI scenario failed with exit code {returncode}"]
+
+    parsed = _parse_cli_output(stdout)
+    extra = bundle["extra"]
+
+    cli_pairs = (
+        ("endpoint", str(extra["selected_endpoint_id"])),
+        ("dataplane_backend", str(extra["dataplane_runtime"]["backend"])),
+        ("runtime_support_tier", str(extra["runtime_support"]["tier"])),
+    )
+    for key, expected in cli_pairs:
+        actual = parsed.get(key)
+        if actual != expected:
+            failures.append(
+                f"runtime selection reporting: CLI field '{key}' was '{actual}', expected '{expected}' from support bundle"
+            )
+
+    endpoint_selection = extra.get("endpoint_selection") or {}
+    if endpoint_selection.get("client_platform") != "android":
+        failures.append(
+            "runtime selection reporting: support bundle endpoint_selection.client_platform did not stay aligned with the android scenario"
+        )
+
+    candidate_order = endpoint_selection.get("candidate_order")
+    if candidate_order != ["spb-main-desktop", "spb-main-android-alt"]:
+        failures.append(
+            "runtime selection reporting: provider-profile candidate order drifted from the expected android-visible manifest order"
+        )
+
+    runtime_support = extra.get("runtime_support") or {}
+    if runtime_support.get("client_platform") != "android":
+        failures.append(
+            "runtime selection reporting: support bundle runtime_support.client_platform did not record the selected target platform"
+        )
+
+    declared = runtime_support.get("declared_platform_capability")
+    if not isinstance(declared, dict):
+        failures.append(
+            "runtime selection reporting: support bundle runtime_support.declared_platform_capability is missing for android"
+        )
+    else:
+        if declared.get("network_adapter") != "android":
+            failures.append(
+                "runtime selection reporting: declared android platform capability no longer reports the expected network adapter"
+            )
+        if declared.get("supported_dataplanes") != ["xray-core", "routed"]:
+            failures.append(
+                "runtime selection reporting: declared android supported_dataplanes drifted from the expected manifest contract"
+            )
+
+    dataplane_runtime = extra.get("dataplane_runtime") or {}
+    if dataplane_runtime.get("backend") != "xray-core":
+        failures.append(
+            "runtime selection reporting: routed android scenario no longer resolves to the xray-core backend"
+        )
+    if dataplane_runtime.get("router_backend") != "routed":
+        failures.append(
+            "runtime selection reporting: routed android scenario no longer reports routed as the router backend"
+        )
+    if dataplane_runtime.get("client_platform") != "android":
+        failures.append(
+            "runtime selection reporting: dataplane runtime snapshot did not record the android target platform"
+        )
+
+    return failures
+
+
 def _check_release_artifact_policy() -> list[str]:
     failures: list[str] = []
 
@@ -1159,6 +1234,7 @@ def main() -> int:
         failures.extend(_check_cache_not_tracked())
         failures.extend(_check_linux_xray_smoke_gate())
         failures.extend(_check_provider_profile_contract())
+        failures.extend(_check_runtime_selection_reporting())
         failures.extend(_check_release_artifact_policy())
         failures.extend(_check_incident_narrative_consistency())
         failures.extend(_check_structural_artifact_parity())
@@ -1179,6 +1255,7 @@ def main() -> int:
     print("- working tree is clean and .cache is not tracked")
     print("- linux+xray MVP contour smoke gate passed")
     print("- provider-profile manifest still declares the expected release/runtime contract")
+    print("- provider-profile runtime selection/reporting stays aligned with manifest contract")
     print("- CLI and support bundle stay aligned on release-facing policy and incident facts")
     print("- incident narrative stays aligned across CLI, telemetry, and support bundle")
     print("- structural run facts stay aligned across CLI and support bundle")
