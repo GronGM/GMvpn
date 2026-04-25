@@ -119,6 +119,7 @@ The baseline automated gate runs:
 
 - `python -m compileall src tests`
 - `PYTHONPATH=src python -m unittest discover -s tests -v`
+- `python tools/release_guardrail.py --allow-dirty-tree --run-local-checks` in the `release-contract` job
 
 Before cutting or reviewing a release candidate, you can also run the compact repo guardrail:
 

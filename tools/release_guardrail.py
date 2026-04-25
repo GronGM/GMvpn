@@ -31,12 +31,14 @@ PROVIDER_PROFILE_MANIFEST = ROOT / "examples" / "provider_profile_manifest.json"
 REQUIRED_CI_SNIPPETS = (
     "python -m compileall src tests",
     "PYTHONPATH=src python -m unittest discover -s tests -v",
+    "python tools/release_guardrail.py --allow-dirty-tree --run-local-checks",
 )
 
 REQUIRED_RELEASE_CHECKLIST_SNIPPETS = (
     "Confirm GitHub Actions `CI` is green for the release candidate.",
     "Run `python -m compileall src tests`.",
     "Run `PYTHONPATH=src python -m unittest discover -s tests -v`.",
+    "Run `python tools/release_guardrail.py --run-local-checks`.",
     "Confirm the support bundle still exports at least:",
     "Do Not Release If",
 )

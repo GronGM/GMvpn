@@ -53,6 +53,22 @@ class ReleaseGuardrailTests(unittest.TestCase):
 
         self.assertEqual(failures, ["checklist.md is missing: gamma"])
 
+    def test_repo_ci_workflow_includes_release_contract_command(self) -> None:
+        failures = release_guardrail._check_required_snippets(
+            release_guardrail.CI_WORKFLOW,
+            release_guardrail.REQUIRED_CI_SNIPPETS,
+        )
+
+        self.assertEqual(failures, [])
+
+    def test_repo_release_checklist_includes_release_contract_command(self) -> None:
+        failures = release_guardrail._check_required_snippets(
+            release_guardrail.RELEASE_CHECKLIST,
+            release_guardrail.REQUIRED_RELEASE_CHECKLIST_SNIPPETS,
+        )
+
+        self.assertEqual(failures, [])
+
     def test_linux_xray_smoke_gate_passes_for_repo_demo_manifest(self) -> None:
         failures = release_guardrail._check_linux_xray_smoke_gate()
         self.assertEqual(failures, [])
