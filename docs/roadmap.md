@@ -6,7 +6,7 @@ This document turns the current repository from "a promising control-plane found
 The target outcome is a resilient VPN client family with one product model and multiple platform runtimes, not a pile of unrelated per-platform experiments.
 
 The immediate goal is not full parity with mature commercial clients.
-The immediate goal is to build a reliable shared core, ship one honest MVP contour, and then widen platform coverage without breaking the operational model.
+The immediate goal is to build a reliable shared core, ship one honest Linux-first MVP contour, and then widen platform coverage without breaking the operational model.
 
 ## Product Shape
 
@@ -18,6 +18,21 @@ The intended product shape is:
 - one support and release model across the product family.
 
 This means the client can eventually feel like one product to providers and end users while still using different runtime adapters and data-plane backends under the hood.
+
+## Current Positioning
+
+The repository should currently be read as:
+
+- a Linux-first prototype with one explicit release-track contour;
+- a shared control plane that is ahead of most platform runtimes;
+- a codebase that already takes release/support contracts seriously;
+- not yet a production-ready cross-platform client.
+
+For practical release and operator work, the only contour that should be described as supported today is:
+
+- `client-platform=linux`
+- linux platform adapter
+- `dataplane=xray-core`
 
 ## Guiding Principles
 
@@ -100,7 +115,7 @@ Deepen the real runtime contracts for the first supported product platforms.
 
 Scope:
 
-- finish the Linux-first command-planning and reconciliation path;
+- finish hardening the Linux-first command-planning and reconciliation path as the active MVP contour;
 - harden Xray-backed runtime contracts for Windows, macOS, and Android;
 - keep iOS on an explicit bridge track until a real Apple runtime exists;
 - define per-platform capability gaps and degraded-mode behavior.
@@ -122,7 +137,7 @@ Make the project releaseable and supportable, not just runnable.
 Scope:
 
 - finalize support bundle contract and bounded telemetry model;
-- define release readiness checklist and rollback expectations;
+- keep release readiness checklist, runtime support assessment, and incident playbooks aligned around the Linux Xray MVP contour;
 - add compatibility and regression test matrix by platform class;
 - document incident triage flow and post-release monitoring expectations.
 
@@ -161,8 +176,10 @@ The first honest MVP should mean:
 - signed manifests with local verification;
 - provider profile compilation and strict validation;
 - endpoint selection, failover, cooldown, and known-good reuse;
-- one reliable Xray-oriented runtime contour for desktop-class platforms and Android modeling;
+- one reliable Linux-first Xray-oriented runtime contour with explicit support assessment;
 - safe local state and startup recovery behavior;
+- Linux command planning and startup reconciliation diagnostics;
+- Xray binary/config preflight diagnostics for real-mode startup;
 - support bundle export and incident summary generation;
 - explicit iOS bridge contract without promising a complete Apple runtime.
 
@@ -181,23 +198,24 @@ This keeps the release target concrete and prevents the repository from implying
 ### Linux
 
 Role:
-Reference runtime and earliest operational baseline.
+Reference runtime, active MVP contour, and earliest operational baseline.
 
 Near-term target:
 
 - keep Linux as the most inspectable command-planning and reconciliation path;
-- use it to validate policy behavior, startup cleanup, support bundle shape, and lifecycle logic.
+- use it to validate policy behavior, startup cleanup, support bundle shape, lifecycle logic, and Xray preflight behavior.
 
 MVP expectation:
 
 - deterministic dry-run and reconciliation behavior;
+- explicit runtime support assessment as `mvp-supported`;
 - reliable state transitions and rollback planning;
 - strong incident visibility.
 
 ### Windows
 
 Role:
-Primary desktop production target on the Xray-backed path.
+Planned desktop target on the Xray-backed path after the Linux contour is stable.
 
 Near-term target:
 
@@ -211,7 +229,7 @@ MVP expectation:
 ### macOS
 
 Role:
-Second desktop target sharing the Xray-backed product model but with distinct network integration constraints.
+Planned desktop target sharing the Xray-backed product model but with distinct network integration constraints.
 
 Near-term target:
 
@@ -226,7 +244,7 @@ MVP expectation:
 ### Android
 
 Role:
-First mobile runtime track using the shared Xray-oriented dataplane model.
+Planned mobile runtime track using the shared Xray-oriented dataplane model.
 
 Near-term target:
 
