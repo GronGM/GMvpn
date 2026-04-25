@@ -90,6 +90,8 @@ class CliTests(unittest.TestCase):
             self.assertFalse(payload["extra"]["session_health_auto_reconnect"])
             self.assertEqual(payload["extra"]["runtime_support"]["tier"], "development-only")
             self.assertFalse(payload["extra"]["runtime_support"]["in_mvp_scope"])
+            self.assertEqual(payload["extra"]["dataplane_runtime"]["backend"], "null")
+            self.assertEqual(payload["extra"]["dataplane_runtime"]["restart_count"], 0)
             self.assertEqual(
                 payload["extra"]["transport_reenable_policy_resolved"]["https"]["retry_delay_seconds"],
                 120,
@@ -115,6 +117,8 @@ class CliTests(unittest.TestCase):
                 None,
             )
             self.assertEqual(payload["extra"]["transport_recovery"]["https"]["crash_streak"], 0)
+            self.assertIn("dataplane_backend=null", stdout.getvalue())
+            self.assertIn("dataplane_restarts=0", stdout.getvalue())
 
     def test_cli_prints_incident_summary_for_degraded_session(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -499,8 +503,27 @@ class CliTests(unittest.TestCase):
             payload = json.loads((tmp_path / "bundle.json").read_text(encoding="utf-8"))
             self.assertEqual(exit_code, 0)
             self.assertIn("runtime_support_tier=contract-mismatch", output)
+            self.assertIn(
+                "runtime_support_summary=repository MVP contour was selected, but the manifest support contract does not declare the same release contour",
+                output,
+            )
+            self.assertIn(
+                "runtime_support_caveats=manifest platform_capabilities for linux do not declare dataplane 'xray-core' | manifest platform_capabilities do not mark the linux xray contour as mvp-supported",
+                output,
+            )
             self.assertEqual(payload["extra"]["runtime_support"]["tier"], "contract-mismatch")
+            self.assertEqual(
+                payload["extra"]["runtime_support"]["summary"],
+                "repository MVP contour was selected, but the manifest support contract does not declare the same release contour",
+            )
             self.assertFalse(payload["extra"]["runtime_support"]["in_mvp_scope"])
+            self.assertEqual(
+                payload["extra"]["runtime_support"]["caveats"],
+                [
+                    "manifest platform_capabilities for linux do not declare dataplane 'xray-core'",
+                    "manifest platform_capabilities do not mark the linux xray contour as mvp-supported",
+                ],
+            )
 
     def test_cli_blocks_runtime_contract_mismatch_when_manifest_requires_it(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
