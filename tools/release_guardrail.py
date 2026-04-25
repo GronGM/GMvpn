@@ -240,6 +240,8 @@ def _check_structural_artifact_parity() -> list[str]:
     connected_pairs = (
         ("endpoint", str(extra["selected_endpoint_id"])),
         ("transport", str(extra["selected_transport"])),
+        ("endpoint_selection_summary", str(extra["endpoint_selection"]["summary"])),
+        ("endpoint_selection_order", ",".join(extra["endpoint_selection"]["candidate_order"])),
         ("dataplane_backend", str(extra["dataplane_runtime"]["backend"])),
         ("dataplane_restarts", str(extra["dataplane_runtime"]["restart_count"])),
     )

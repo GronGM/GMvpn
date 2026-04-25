@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 
 from vpn_client.client_platform import ClientPlatform
 from vpn_client.dataplane import DataPlaneBackend, DataPlaneError, NullDataPlane
@@ -26,6 +26,7 @@ class SessionReport:
     attempts: list[ConnectionAttempt] = field(default_factory=list)
     selected_endpoint_id: str | None = None
     selected_transport: str | None = None
+    selection_summary: dict[str, object] | None = None
     applied_tunnel_mode: str | None = None
     kill_switch_active: bool = False
     failure_class: FailureClass = FailureClass.NONE
@@ -59,6 +60,7 @@ class SessionOrchestrator:
         self.health_monitor = SessionHealthMonitor(self.dataplane, self.network_stack, self.telemetry)
         self.state = SessionState.IDLE
         self.last_known_good_endpoint_id: str | None = None
+        self.last_selection_summary: dict[str, object] | None = None
 
     def _cleanup_after_failed_attempt(self, transport: Transport, disconnect_network_stack: bool) -> None:
         transport.disconnect()
@@ -79,6 +81,7 @@ class SessionOrchestrator:
             last_known_good_endpoint_id=self.last_known_good_endpoint_id,
             client_platform=self.client_platform,
         )
+        self.last_selection_summary = None
         self.state = SessionState.PROBING
 
         last_failure = FailureClass.UNKNOWN
@@ -91,6 +94,14 @@ class SessionOrchestrator:
             endpoint = scheduled.endpoint
             last_endpoint_id = endpoint.id
             last_transport = endpoint.transport
+            selection_summary = self.scheduler.summarize_selection(
+                scheduled_endpoints,
+                endpoint.id,
+                manifest,
+                last_known_good_endpoint_id=self.last_known_good_endpoint_id,
+                client_platform=self.client_platform,
+            )
+            self.last_selection_summary = asdict(selection_summary) if selection_summary is not None else None
             if scheduled.cooling_down:
                 self.telemetry.record(
                     "endpoint_cooling_down",
@@ -232,6 +243,7 @@ class SessionOrchestrator:
                     attempts=attempts,
                     selected_endpoint_id=endpoint.id,
                     selected_transport=endpoint.transport,
+                    selection_summary=self.last_selection_summary,
                     applied_tunnel_mode=applied.tunnel_mode,
                     kill_switch_active=self.network_stack.kill_switch_active,
                     detail="session established",
@@ -399,6 +411,7 @@ class SessionOrchestrator:
             attempts=attempts,
             selected_endpoint_id=last_endpoint_id,
             selected_transport=last_transport,
+            selection_summary=self.last_selection_summary,
             kill_switch_active=self.network_stack.kill_switch_active,
             failure_class=last_failure,
             reason_code=last_reason_code,
@@ -563,6 +576,7 @@ class SessionOrchestrator:
             state=self.state,
             selected_endpoint_id=endpoint.id,
             selected_transport=endpoint.transport,
+            selection_summary=self.last_selection_summary,
             applied_tunnel_mode=applied_tunnel_mode,
             kill_switch_active=self.network_stack.kill_switch_active,
             failure_class=failure_class,
@@ -701,6 +715,7 @@ class SessionOrchestrator:
             state=self.state,
             selected_endpoint_id=endpoint.id,
             selected_transport=endpoint.transport,
+            selection_summary=self.last_selection_summary,
             applied_tunnel_mode=self.network_stack.applied_state.tunnel_mode,
             kill_switch_active=self.network_stack.kill_switch_active,
             detail="health checks passed",

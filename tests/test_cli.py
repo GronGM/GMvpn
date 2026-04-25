@@ -76,6 +76,19 @@ class CliTests(unittest.TestCase):
             self.assertEqual(payload["extra"]["incident_summary"]["severity"], "warning")
             self.assertTrue(payload["extra"]["incident_summary"]["startup_recovery_triggered"])
             self.assertEqual(payload["extra"]["incident_summary"]["selected_transport"], "https")
+            self.assertEqual(payload["extra"]["endpoint_selection"]["selected_endpoint_id"], "ru-spb-https-1")
+            self.assertEqual(
+                payload["extra"]["endpoint_selection"]["candidate_order"],
+                ["ru-mow-1", "ru-spb-quic-1", "ru-spb-https-1"],
+            )
+            self.assertIn(
+                "endpoint_selection_order=ru-mow-1,ru-spb-quic-1,ru-spb-https-1",
+                stdout.getvalue(),
+            )
+            self.assertIn(
+                "endpoint_selection_summary=selected ru-spb-https-1",
+                stdout.getvalue(),
+            )
             self.assertIn("ru-mow-1", payload["extra"]["incident_summary"]["cooling_down_endpoints"])
             self.assertEqual(payload["extra"]["incident_summary"]["last_crash_transport"], "https")
             self.assertEqual(

@@ -109,6 +109,10 @@ class SessionOrchestratorTests(unittest.TestCase):
 
         self.assertEqual(report.state, SessionState.CONNECTED)
         self.assertEqual(report.selected_endpoint_id, "https-2")
+        self.assertIsNotNone(report.selection_summary)
+        assert report.selection_summary is not None
+        self.assertTrue(report.selection_summary["was_last_known_good"])
+        self.assertIn("matched last-known-good endpoint", report.selection_summary["summary"])
 
     def test_orchestrator_records_network_policy_failure(self) -> None:
         telemetry = TelemetryRecorder()
@@ -600,6 +604,15 @@ class SessionOrchestratorTests(unittest.TestCase):
         report = orchestrator.connect(manifest)
 
         self.assertEqual(report.selected_endpoint_id, "desktop-primary")
+        self.assertIsNotNone(report.selection_summary)
+        assert report.selection_summary is not None
+        self.assertEqual(report.selection_summary["client_platform"], "windows")
+        self.assertEqual(report.selection_summary["platform_rank"], 10)
+        self.assertEqual(
+            report.selection_summary["candidate_order"],
+            ["desktop-primary", "desktop-secondary"],
+        )
+        self.assertIn("client platform windows", report.selection_summary["summary"])
 
     def test_orchestrator_builds_and_emits_incident_summary(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

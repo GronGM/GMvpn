@@ -408,6 +408,12 @@ def main() -> int:
         print(f"endpoint={report.selected_endpoint_id}")
     if report.selected_transport:
         print(f"transport={report.selected_transport}")
+    if report.selection_summary is not None:
+        print(f"endpoint_selection_summary={report.selection_summary['summary']}")
+        print(
+            "endpoint_selection_order="
+            + ",".join(str(item) for item in report.selection_summary["candidate_order"])
+        )
     if report.applied_tunnel_mode:
         print(f"tunnel_mode={report.applied_tunnel_mode}")
     print(f"session_health_checks={effective_health_checks}")
@@ -524,6 +530,7 @@ def main() -> int:
                 "startup_recovery_actions": recovery_report.actions,
                 "selected_endpoint_id": report.selected_endpoint_id,
                 "selected_transport": report.selected_transport,
+                "endpoint_selection": report.selection_summary,
                 "runtime_marker_present": runtime_state.load_marker() is not None,
                 "last_connected_endpoint_id": state_manager.state.last_connected_endpoint_id,
                 "session_health_checks": effective_health_checks,
