@@ -937,6 +937,15 @@ class CliTests(unittest.TestCase):
                 "generated_at": "2026-04-23T00:00:00Z",
                 "expires_at": "2026-04-30T00:00:00Z",
                 "features": {"support_bundle_enabled": True},
+                "platform_capabilities": {
+                    "ios": {
+                        "platform": "ios",
+                        "supported_dataplanes": ["ios-bridge", "routed"],
+                        "network_adapter": "ios",
+                        "status": "planned",
+                        "notes": "Bridge only",
+                    }
+                },
                 "transport_policy": {
                     "preferred_order": ["https"],
                     "connect_timeout_ms": 2500,
@@ -1010,6 +1019,8 @@ class CliTests(unittest.TestCase):
             self.assertEqual(exit_code, 1)
             self.assertTrue((tmp_path / "ios-bridge" / "ios-1.json").exists())
             self.assertIn("incident_summary:", output)
+            self.assertIn("endpoint_selection_summary=selected ios-1", output)
+            self.assertIn("runtime_support_tier=development-only", output)
             self.assertIn(
                 "primary_transport_issue=https disabled=False pending_reenable=False crash_bucket=None soft_fail_bucket=unknown:dataplane_backend_unsupported",
                 output,
@@ -1017,6 +1028,21 @@ class CliTests(unittest.TestCase):
             payload = json.loads((tmp_path / "bundle.json").read_text(encoding="utf-8"))
             self.assertEqual(payload["events"][-1]["incident_severity"], "critical")
             self.assertEqual(payload["events"][-1]["primary_transport_issue"]["transport"], "https")
+            self.assertEqual(payload["extra"]["selected_endpoint_id"], "ios-1")
+            self.assertEqual(payload["extra"]["endpoint_selection"]["client_platform"], "ios")
+            self.assertEqual(payload["extra"]["endpoint_selection"]["candidate_order"], ["ios-1"])
+            self.assertEqual(payload["extra"]["runtime_support"]["client_platform"], "ios")
+            self.assertEqual(payload["extra"]["runtime_support"]["tier"], "development-only")
+            self.assertEqual(
+                payload["extra"]["runtime_support"]["declared_platform_capability"]["network_adapter"],
+                "ios",
+            )
+            self.assertEqual(
+                payload["extra"]["runtime_support"]["declared_platform_capability"]["supported_dataplanes"],
+                ["ios-bridge", "routed"],
+            )
+            self.assertEqual(payload["extra"]["dataplane_runtime"]["backend"], "routed")
+            self.assertIsNone(payload["extra"]["dataplane_runtime"]["active_backend"])
 
     def test_cli_provider_profile_selects_platform_specific_endpoint(self) -> None:
         root = Path(__file__).resolve().parents[1]

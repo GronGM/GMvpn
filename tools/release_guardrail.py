@@ -656,6 +656,120 @@ def _check_runtime_selection_reporting() -> list[str]:
     return failures
 
 
+def _check_bridge_runtime_reporting() -> list[str]:
+    failures: list[str] = []
+    ios_bridge_manifest = {
+        "version": 1,
+        "generated_at": "2026-04-23T00:00:00Z",
+        "expires_at": "2026-04-30T00:00:00Z",
+        "features": {"support_bundle_enabled": True},
+        "platform_capabilities": {
+            "ios": {
+                "platform": "ios",
+                "supported_dataplanes": ["ios-bridge", "routed"],
+                "network_adapter": "ios",
+                "status": "planned",
+                "notes": "Bridge only",
+            }
+        },
+        "transport_policy": {
+            "preferred_order": ["https"],
+            "connect_timeout_ms": 2500,
+            "retry_budget": 1,
+            "probe_timeout_ms": 1000,
+        },
+        "network_policy": {
+            "tunnel_mode": "full",
+            "dns_mode": "vpn_only",
+            "kill_switch_enabled": True,
+            "ipv6_enabled": False,
+            "allow_lan_while_connected": False,
+        },
+        "endpoints": [
+            {
+                "id": "ios-1",
+                "host": "198.51.100.20",
+                "port": 443,
+                "transport": "https",
+                "region": "eu-central",
+                "tags": [],
+                "metadata": {
+                    "dataplane": "ios-bridge",
+                    "xray_protocol": "vless",
+                    "xray_user_id": "11111111-1111-1111-1111-111111111111",
+                    "xray_stream_network": "ws",
+                    "xray_security": "tls",
+                    "xray_server_name": "cdn.example.net",
+                    "xray_ws_path": "/edge",
+                    "xray_ws_host": "cdn.example.net",
+                },
+            }
+        ],
+    }
+    returncode, stdout, bundle = _run_custom_cli_and_collect(
+        ios_bridge_manifest,
+        args=("--platform", "simulated", "--client-platform", "ios", "--dataplane", "routed"),
+    )
+    if returncode != 1:
+        return [f"bridge runtime reporting: ios bridge CLI scenario returned {returncode}, expected 1"]
+
+    parsed = _parse_cli_output(stdout)
+    extra = bundle["extra"]
+
+    cli_pairs = (
+        ("endpoint", str(extra["selected_endpoint_id"])),
+        ("runtime_support_tier", str(extra["runtime_support"]["tier"])),
+    )
+    for key, expected in cli_pairs:
+        actual = parsed.get(key)
+        if actual != expected:
+            failures.append(
+                f"bridge runtime reporting: CLI field '{key}' was '{actual}', expected '{expected}' from support bundle"
+            )
+
+    endpoint_selection = extra.get("endpoint_selection") or {}
+    if endpoint_selection.get("client_platform") != "ios":
+        failures.append(
+            "bridge runtime reporting: support bundle endpoint_selection.client_platform did not stay aligned with the ios scenario"
+        )
+    if endpoint_selection.get("candidate_order") != ["ios-1"]:
+        failures.append(
+            "bridge runtime reporting: ios bridge candidate order drifted from the expected single-endpoint manifest order"
+        )
+
+    runtime_support = extra.get("runtime_support") or {}
+    if runtime_support.get("client_platform") != "ios":
+        failures.append(
+            "bridge runtime reporting: support bundle runtime_support.client_platform did not record the ios target platform"
+        )
+    declared = runtime_support.get("declared_platform_capability")
+    if not isinstance(declared, dict):
+        failures.append(
+            "bridge runtime reporting: support bundle runtime_support.declared_platform_capability is missing for ios"
+        )
+    else:
+        if declared.get("network_adapter") != "ios":
+            failures.append(
+                "bridge runtime reporting: declared ios platform capability no longer reports the expected network adapter"
+            )
+        if declared.get("supported_dataplanes") != ["ios-bridge", "routed"]:
+            failures.append(
+                "bridge runtime reporting: declared ios supported_dataplanes drifted from the expected manifest contract"
+            )
+
+    dataplane_runtime = extra.get("dataplane_runtime") or {}
+    if dataplane_runtime.get("backend") != "routed":
+        failures.append(
+            "bridge runtime reporting: ios routed scenario no longer reports routed as the dataplane backend surface"
+        )
+    if dataplane_runtime.get("active_backend") is not None:
+        failures.append(
+            "bridge runtime reporting: ios bridge failure path unexpectedly reported an active backend after connect failure"
+        )
+
+    return failures
+
+
 def _check_release_artifact_policy() -> list[str]:
     failures: list[str] = []
 
@@ -1235,6 +1349,7 @@ def main() -> int:
         failures.extend(_check_linux_xray_smoke_gate())
         failures.extend(_check_provider_profile_contract())
         failures.extend(_check_runtime_selection_reporting())
+        failures.extend(_check_bridge_runtime_reporting())
         failures.extend(_check_release_artifact_policy())
         failures.extend(_check_incident_narrative_consistency())
         failures.extend(_check_structural_artifact_parity())
@@ -1256,6 +1371,7 @@ def main() -> int:
     print("- linux+xray MVP contour smoke gate passed")
     print("- provider-profile manifest still declares the expected release/runtime contract")
     print("- provider-profile runtime selection/reporting stays aligned with manifest contract")
+    print("- non-Linux bridge-only runtime reporting stays aligned with manifest contract")
     print("- CLI and support bundle stay aligned on release-facing policy and incident facts")
     print("- incident narrative stays aligned across CLI, telemetry, and support bundle")
     print("- structural run facts stay aligned across CLI and support bundle")

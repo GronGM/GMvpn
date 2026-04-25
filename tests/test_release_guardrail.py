@@ -191,6 +191,10 @@ class ReleaseGuardrailTests(unittest.TestCase):
         failures = release_guardrail._check_runtime_selection_reporting()
         self.assertEqual(failures, [])
 
+    def test_bridge_runtime_reporting_passes(self) -> None:
+        failures = release_guardrail._check_bridge_runtime_reporting()
+        self.assertEqual(failures, [])
+
     def test_parse_incident_telemetry_detail_extracts_narrative_fields(self) -> None:
         parsed = release_guardrail._parse_incident_telemetry_detail(
             "warning: session did not connect and needs investigation; Retry using a transport on a different protocol or port profile and verify upstream filtering."
