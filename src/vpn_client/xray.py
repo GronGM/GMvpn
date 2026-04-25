@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 import shutil
+import subprocess
 
 from vpn_client.backend_state import BackendStateStore, now_utc_iso
 from vpn_client.dataplane import (
@@ -27,6 +28,14 @@ class XrayConfigRenderer:
         protocol = str(metadata.get("xray_protocol", "vless"))
         stream_network = str(metadata.get("xray_stream_network", "tcp"))
         security = str(metadata.get("xray_security", "none"))
+        tun_settings: dict[str, object] = {
+            "name": self.interface_name,
+            # Keep the TUN inbound on the small, documented Xray surface.
+            "MTU": int(metadata.get("xray_tun_mtu", 1380)),
+        }
+        user_level = metadata.get("xray_tun_user_level")
+        if user_level is not None:
+            tun_settings["userLevel"] = int(user_level)
 
         config = {
             "log": {"loglevel": str(metadata.get("xray_log_level", "warning"))},
@@ -34,13 +43,7 @@ class XrayConfigRenderer:
                 {
                     "tag": "tun-in",
                     "protocol": "tun",
-                    "settings": {
-                        "name": self.interface_name,
-                        "mtu": int(metadata.get("xray_tun_mtu", 1380)),
-                        "stack": str(metadata.get("xray_tun_stack", "system")),
-                        "autoRoute": False,
-                        "strictRoute": False,
-                    },
+                    "settings": tun_settings,
                     "sniffing": {"enabled": True, "destOverride": ["http", "tls", "quic"]},
                 }
             ],
@@ -202,6 +205,7 @@ class XrayCoreDataPlane(LinuxUserspaceDataPlane):
         binary_path: str = "xray",
         renderer: XrayConfigRenderer | None = None,
         binary_exists=None,
+        config_test_runner=None,
     ) -> None:
         super().__init__(
             interface_name=interface_name,
@@ -214,6 +218,7 @@ class XrayCoreDataPlane(LinuxUserspaceDataPlane):
         self.binary_path = binary_path
         self.renderer = renderer or XrayConfigRenderer(interface_name=interface_name)
         self.binary_exists = binary_exists or shutil.which
+        self.config_test_runner = config_test_runner or subprocess.run
         self.active_config_path: Path | None = None
         self.preflight_error: str | None = None
         self.binary_available: bool | None = None
@@ -242,6 +247,8 @@ class XrayCoreDataPlane(LinuxUserspaceDataPlane):
         config_path = self.config_dir / f"{endpoint.id}.json"
         config_path.write_text(self.renderer.render_json(endpoint), encoding="utf-8")
         self.active_config_path = config_path
+        if not self.dry_run:
+            self._validate_rendered_config(config_path)
 
         command = [self.binary_path, "run", "-config", str(config_path)]
         try:
@@ -284,3 +291,28 @@ class XrayCoreDataPlane(LinuxUserspaceDataPlane):
         if self.active_config_path and self.active_config_path.exists():
             self.active_config_path.unlink()
         self.active_config_path = None
+
+    def _validate_rendered_config(self, config_path: Path) -> None:
+        command = [self.binary_path, "run", "-test", "-config", str(config_path)]
+        result = self.config_test_runner(
+            command,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        if result.returncode == 0:
+            self.preflight_error = None
+            return
+
+        detail = (result.stderr or result.stdout or "").strip()
+        if detail:
+            detail = " ".join(detail.split())
+            self.preflight_error = f"xray-core config validation failed: {detail}"
+        else:
+            self.preflight_error = "xray-core config validation failed"
+        self._cleanup_config()
+        raise DataPlaneError(
+            FailureClass.ENDPOINT_DOWN,
+            self.preflight_error,
+            reason_code=FailureReasonCode.DATAPLANE_BACKEND_START_FAILED,
+        )
