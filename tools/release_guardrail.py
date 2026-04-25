@@ -26,6 +26,7 @@ CI_WORKFLOW = ROOT / ".github" / "workflows" / "ci.yml"
 RELEASE_CHECKLIST = ROOT / "docs" / "release-checklist.md"
 README = ROOT / "README.md"
 DEMO_MANIFEST = ROOT / "examples" / "demo_manifest.json"
+PROVIDER_PROFILE_MANIFEST = ROOT / "examples" / "provider_profile_manifest.json"
 
 REQUIRED_CI_SNIPPETS = (
     "python -m compileall src tests",
@@ -1067,6 +1068,66 @@ def _check_linux_xray_smoke_gate() -> list[str]:
         return failures
 
 
+def _check_provider_profile_contract() -> list[str]:
+    if not PROVIDER_PROFILE_MANIFEST.exists():
+        return [f"missing required file: {PROVIDER_PROFILE_MANIFEST.relative_to(ROOT)}"]
+
+    payload = json.loads(_read_text(PROVIDER_PROFILE_MANIFEST))
+    features = payload.get("features", {})
+    if not isinstance(features, dict) or features.get("profile_kind") != "provider-profile":
+        return ["provider-profile contract: provider profile manifest is missing features.profile_kind='provider-profile'"]
+
+    provider_schema_version = payload.get("provider_profile_schema_version")
+    if provider_schema_version != 1:
+        return ["provider-profile contract: provider profile manifest must declare provider_profile_schema_version=1"]
+
+    platform_payload = payload.get("platform_capabilities", {}).get("linux")
+    if not isinstance(platform_payload, dict):
+        return ["provider-profile contract: provider profile manifest is missing linux platform capability"]
+    if "xray-core" not in [str(item) for item in platform_payload.get("supported_dataplanes", [])]:
+        return ["provider-profile contract: linux platform capability no longer declares xray-core support"]
+    if str(platform_payload.get("status", "")) != "mvp-supported":
+        return ["provider-profile contract: linux platform capability no longer marks the reference contour as mvp-supported"]
+
+    endpoints = payload.get("endpoints", [])
+    linux_xray_endpoint = next(
+        (
+            item
+            for item in endpoints
+            if isinstance(item, dict)
+            and item.get("metadata", {}).get("dataplane") == "xray-core"
+            and "linux" in item.get("metadata", {}).get("supported_client_platforms", [])
+        ),
+        None,
+    )
+    if linux_xray_endpoint is None:
+        return ["provider-profile contract: provider profile manifest is missing a linux-targeted xray-core endpoint"]
+
+    ios_bridge_endpoint = next(
+        (
+            item
+            for item in endpoints
+            if isinstance(item, dict)
+            and item.get("metadata", {}).get("dataplane") == "ios-bridge"
+            and item.get("metadata", {}).get("supported_client_platforms") == ["ios"]
+        ),
+        None,
+    )
+    if ios_bridge_endpoint is None:
+        return ["provider-profile contract: provider profile manifest is missing a bridge-only ios endpoint"]
+
+    for endpoint in (linux_xray_endpoint, ios_bridge_endpoint):
+        metadata = endpoint.get("metadata", {})
+        if not isinstance(metadata, dict) or not metadata.get("logical_server"):
+            return [f"provider-profile contract: endpoint '{endpoint.get('id', '')}' is missing logical_server metadata"]
+        if metadata.get("provider_profile_schema_version") != 1:
+            return [
+                f"provider-profile contract: endpoint '{endpoint.get('id', '')}' is missing provider_profile_schema_version=1"
+            ]
+
+    return []
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(
         description="Run compact release guardrails before opening or shipping a candidate."
@@ -1095,6 +1156,7 @@ def main() -> int:
             failures.extend(_check_git_clean())
         failures.extend(_check_cache_not_tracked())
         failures.extend(_check_linux_xray_smoke_gate())
+        failures.extend(_check_provider_profile_contract())
         failures.extend(_check_release_artifact_policy())
         failures.extend(_check_incident_narrative_consistency())
         failures.extend(_check_structural_artifact_parity())
@@ -1114,6 +1176,7 @@ def main() -> int:
     print("- release checklist still documents the same local gates")
     print("- working tree is clean and .cache is not tracked")
     print("- linux+xray MVP contour smoke gate passed")
+    print("- provider-profile manifest still declares the expected release/runtime contract")
     print("- CLI and support bundle stay aligned on release-facing policy and incident facts")
     print("- incident narrative stays aligned across CLI, telemetry, and support bundle")
     print("- structural run facts stay aligned across CLI and support bundle")
