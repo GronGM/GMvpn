@@ -30,6 +30,7 @@ It is intentionally narrower than a full cross-platform product release.
 - Run `python tools/release_guardrail.py`.
 - Run `python -m compileall src tests`.
 - Run `PYTHONPATH=src python -m unittest discover -s tests -v`.
+- Run `python tools/release_guardrail.py --run-local-checks`.
 - If the release changes Xray rendering or CI/runtime assumptions, run `PYTHONPATH=src python tools/xray_config_smoke.py --validation-inbound-mode socks`.
 - Confirm the runtime support assessment still marks `linux + xray-core + linux adapter` as `mvp-supported`.
 
